@@ -8,6 +8,8 @@ import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { PublicLayout } from "@/components/auth/PublicLayout";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { supabaseConfigError } from "@/lib/supabase";
 import HomePage from "./pages/HomePage";
 import OverviewHome from "./pages/OverviewHome";
 import CommandCenter from "./pages/CommandCenter";
@@ -55,6 +57,14 @@ const App = () => (
         <AuthProvider>
           <Toaster />
           <Sonner />
+          {supabaseConfigError ? (
+            <div className="px-4 pt-4">
+              <Alert className="mx-auto max-w-5xl border-amber-300/60 bg-amber-50 text-amber-950">
+                <AlertTitle>Deployment configuration needed</AlertTitle>
+                <AlertDescription>{supabaseConfigError}</AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
           <BrowserRouter>
           <Routes>
             <Route element={<PublicLayout />}>

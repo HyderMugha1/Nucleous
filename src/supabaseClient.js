@@ -28,6 +28,46 @@ function validateSupabaseClientConfig() {
   }
 }
 
-validateSupabaseClientConfig();
+function createConfigError(error) {
+  const message = error instanceof Error ? error.message : "Supabase configuration is invalid.";
+  return `${message} Add the required Vercel environment variables and redeploy.`;
+}
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+function createUnavailableSupabaseClient(message) {
+  const unavailable = async () => ({
+    data: { session: null, user: null },
+    error: new Error(message),
+  });
+
+  return {
+    auth: {
+      getSession: unavailable,
+      signInWithPassword: unavailable,
+      signInWithOAuth: unavailable,
+      resetPasswordForEmail: unavailable,
+      updateUser: unavailable,
+      signOut: async () => ({ error: null }),
+      onAuthStateChange: () => ({
+        data: {
+          subscription: {
+            unsubscribe() {},
+          },
+        },
+      }),
+    },
+  };
+}
+
+let supabaseConfigError = null;
+
+try {
+  validateSupabaseClientConfig();
+} catch (error) {
+  supabaseConfigError = createConfigError(error);
+}
+
+export { supabaseConfigError };
+
+export const supabase = supabaseConfigError
+  ? createUnavailableSupabaseClient(supabaseConfigError)
+  : createClient(supabaseUrl, supabaseAnonKey);
