@@ -4,6 +4,18 @@ import { supabaseAdmin } from "../supabase.js";
 
 const router = express.Router();
 
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message);
+  }
+
+  return "Unknown error";
+}
+
 // Public endpoint - no auth required for diagnostics
 router.get(
   "/health",
@@ -99,7 +111,7 @@ router.get(
     } catch (error) {
       return res.status(500).json({
         message: "Database connection failed",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: getErrorMessage(error),
       });
     }
   }),
@@ -267,7 +279,7 @@ router.post(
     } catch (error) {
       return res.status(500).json({
         message: "Error fixing data",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: getErrorMessage(error),
       });
     }
   }),

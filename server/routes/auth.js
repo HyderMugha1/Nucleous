@@ -16,8 +16,34 @@ function getSupabaseConnectivityMessage() {
   return "Unable to reach Supabase. Check SUPABASE_URL, VITE_SUPABASE_URL, and your DNS/network connection.";
 }
 
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message);
+  }
+
+  return "Unknown error";
+}
+
 function isMissingServiceRoleError(error) {
-  return error instanceof Error && error.message.includes("SUPABASE_SERVICE_ROLE_KEY");
+  return getErrorMessage(error).includes("SUPABASE_SERVICE_ROLE_KEY");
+}
+
+function isSupabaseAdminConfigError(error) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("invalid api key") || message.includes("invalid jwt");
+}
+
+function isWorkspaceSnapshotIncomplete(error) {
+  const message = getErrorMessage(error);
+  return (
+    message === "Profile not found" ||
+    message === "Membership not found" ||
+    message === "Organization not found"
+  );
 }
 
 function buildSlug(value) {
@@ -530,16 +556,23 @@ router.post("/login", async (req, res) => {
     try {
       snapshot = await getMembershipSnapshot(authData.user.id);
     } catch (snapshotError) {
-      if (isMissingServiceRoleError(snapshotError)) {
+      if (isMissingServiceRoleError(snapshotError) || isSupabaseAdminConfigError(snapshotError)) {
         return res.status(503).json({
-          message: MISSING_SERVICE_ROLE_MESSAGE,
-          error: snapshotError.message,
+          message: "The backend Supabase admin credentials are invalid in Vercel. Re-save SUPABASE_SERVICE_ROLE_KEY with the full service-role key and redeploy.",
+          error: getErrorMessage(snapshotError),
         });
       }
 
-      return res.status(409).json({
-        message: "Your account exists, but the workspace profile is incomplete. Please contact support or complete onboarding again.",
-        error: snapshotError instanceof Error ? snapshotError.message : "Membership snapshot failed",
+      if (isWorkspaceSnapshotIncomplete(snapshotError)) {
+        return res.status(409).json({
+          message: "Your account exists, but the workspace profile is incomplete. Please contact support or complete onboarding again.",
+          error: getErrorMessage(snapshotError),
+        });
+      }
+
+      return res.status(500).json({
+        message: "Login failed while loading your workspace.",
+        error: getErrorMessage(snapshotError),
       });
     }
 
