@@ -373,7 +373,7 @@ export default function TVIntelligence() {
           <Input
             value={youtubeChannelId}
             onChange={(event) => setYoutubeChannelId(event.target.value)}
-            placeholder="Add YouTube channel ID"
+            placeholder="Add YouTube channel ID, @handle, or URL"
             disabled={integrationStatus.youtubeConfigured === false}
           />
           <Button
@@ -386,6 +386,11 @@ export default function TVIntelligence() {
         {integrationStatus.youtubeConfigured === false && (
           <p className="text-xs text-muted-foreground">
             Add `YOUTUBE_API_KEY` in Vercel Project Settings -&gt; Environment Variables, then redeploy to enable channel connection.
+          </p>
+        )}
+        {integrationStatus.youtubeConfigured !== false && (
+          <p className="text-xs text-muted-foreground">
+            Paste a YouTube channel ID like `UC...`, a handle like `@GoogleDevelopers`, or a full channel URL.
           </p>
         )}
 

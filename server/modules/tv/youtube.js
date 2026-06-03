@@ -20,15 +20,125 @@ async function youtubeGet(path, params) {
   return data;
 }
 
-export async function fetchChannelMetadata(youtubeChannelId) {
-  const data = await youtubeGet("/channels", {
+function buildChannelLookupCandidates(rawInput) {
+  const input = String(rawInput || "").trim();
+  if (!input) return [];
+
+  const candidates = [];
+  const pushCandidate = (type, value) => {
+    if (!value) return;
+    if (candidates.some((candidate) => candidate.type === type && candidate.value === value)) return;
+    candidates.push({ type, value });
+  };
+
+  const addFreeformCandidates = (value) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) return;
+    if (/^UC[\w-]{20,}$/i.test(trimmed)) {
+      pushCandidate("id", trimmed);
+      return;
+    }
+    if (trimmed.startsWith("@")) {
+      pushCandidate("handle", trimmed);
+      return;
+    }
+    pushCandidate("handle", trimmed);
+    pushCandidate("username", trimmed);
+    pushCandidate("search", trimmed);
+  };
+
+  try {
+    const url = new URL(input);
+    if (url.hostname.includes("youtube.com")) {
+      const segments = url.pathname.split("/").filter(Boolean);
+      const [first, second] = segments;
+
+      if (first === "channel") pushCandidate("id", second);
+      if (first === "user") pushCandidate("username", second);
+      if (first === "c") pushCandidate("search", second);
+      if (first?.startsWith("@")) pushCandidate("handle", first);
+
+      if (first && !["channel", "user", "c"].includes(first) && !first.startsWith("@")) {
+        pushCandidate("search", first);
+      }
+    }
+  } catch {
+    addFreeformCandidates(input);
+  }
+
+  if (candidates.length === 0) {
+    addFreeformCandidates(input);
+  }
+
+  return candidates;
+}
+
+async function lookupChannelById(channelId) {
+  return youtubeGet("/channels", {
     part: "snippet,contentDetails",
-    id: youtubeChannelId,
+    id: channelId,
+  });
+}
+
+async function lookupChannelByHandle(handle) {
+  return youtubeGet("/channels", {
+    part: "snippet,contentDetails",
+    forHandle: handle,
+  });
+}
+
+async function lookupChannelByUsername(username) {
+  return youtubeGet("/channels", {
+    part: "snippet,contentDetails",
+    forUsername: username,
+  });
+}
+
+async function lookupChannelBySearch(query) {
+  const search = await youtubeGet("/search", {
+    part: "snippet",
+    type: "channel",
+    q: query,
+    maxResults: "1",
   });
 
-  const item = data.items?.[0];
+  const channelId = search.items?.[0]?.id?.channelId;
+  if (!channelId) {
+    return { items: [] };
+  }
+
+  return lookupChannelById(channelId);
+}
+
+async function resolveChannelLookup(input) {
+  const candidates = buildChannelLookupCandidates(input);
+
+  for (const candidate of candidates) {
+    let data;
+
+    if (candidate.type === "id") {
+      data = await lookupChannelById(candidate.value);
+    } else if (candidate.type === "handle") {
+      data = await lookupChannelByHandle(candidate.value);
+    } else if (candidate.type === "username") {
+      data = await lookupChannelByUsername(candidate.value);
+    } else if (candidate.type === "search") {
+      data = await lookupChannelBySearch(candidate.value);
+    }
+
+    if (data?.items?.[0]) {
+      return data.items[0];
+    }
+  }
+
+  return null;
+}
+
+export async function fetchChannelMetadata(youtubeChannelInput) {
+  const item = await resolveChannelLookup(youtubeChannelInput);
+
   if (!item) {
-    throw new Error("YouTube channel not found");
+    throw new Error("YouTube channel not found. Enter a channel ID, @handle, or YouTube channel URL.");
   }
 
   return {
