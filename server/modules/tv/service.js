@@ -25,6 +25,37 @@ export async function createTvChannel({ organizationId, createdBy, youtubeChanne
   ensureAdminClient();
   const channel = await fetchChannelMetadata(youtubeChannelId);
 
+  const { data: existingChannel, error: existingError } = await supabaseAdmin
+    .from("tv_youtube_channels")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("youtube_channel_id", channel.youtubeChannelId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message || "Unable to check existing TV channel");
+  }
+
+  if (existingChannel) {
+    const { data: refreshedChannel, error: refreshError } = await supabaseAdmin
+      .from("tv_youtube_channels")
+      .update({
+        channel_name: channel.channelName,
+        thumbnail_url: channel.thumbnailUrl,
+        channel_url: channel.channelUrl,
+        status: "active",
+      })
+      .eq("id", existingChannel.id)
+      .select("*")
+      .single();
+
+    if (refreshError || !refreshedChannel) {
+      throw new Error(refreshError?.message || "Unable to refresh existing TV channel");
+    }
+
+    return { ...refreshedChannel, uploadsPlaylistId: channel.uploadsPlaylistId };
+  }
+
   const { data, error } = await supabaseAdmin
     .from("tv_youtube_channels")
     .insert({
@@ -39,6 +70,23 @@ export async function createTvChannel({ organizationId, createdBy, youtubeChanne
     .single();
 
   if (error || !data) {
+    if (error?.code === "23505") {
+      const { data: duplicateChannel, error: duplicateError } = await supabaseAdmin
+        .from("tv_youtube_channels")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .eq("youtube_channel_id", channel.youtubeChannelId)
+        .maybeSingle();
+
+      if (duplicateError) {
+        throw new Error(duplicateError.message || "Unable to load existing TV channel");
+      }
+
+      if (duplicateChannel) {
+        return { ...duplicateChannel, uploadsPlaylistId: channel.uploadsPlaylistId };
+      }
+    }
+
     throw new Error(error?.message || "Unable to create TV channel");
   }
 
