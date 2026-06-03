@@ -1,6 +1,7 @@
 import express from "express";
 import { asyncHandler, ok } from "../utils/http.js";
 import { supabaseAdmin } from "../supabase.js";
+import { config } from "../config.js";
 
 const router = express.Router();
 
@@ -75,6 +76,11 @@ router.get(
 
       return ok(res, {
         database: "connected",
+        integrations: {
+          youtubeConfigured: Boolean(config.youtubeApiKey),
+          geminiConfigured: Boolean(config.geminiApiKey),
+          tiktokConfigured: Boolean(config.tiktokClientKey && config.tiktokClientSecret && config.tiktokRedirectUri),
+        },
         organizations: {
           total: organizations?.length || 0,
           items: organizations || [],
