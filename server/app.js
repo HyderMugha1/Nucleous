@@ -52,6 +52,7 @@ function buildAllowedOrigins() {
 
 const allowedOrigins = buildAllowedOrigins();
 const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+const vercelAppPattern = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/i;
 
 export function createApp() {
   const app = express();
@@ -59,7 +60,7 @@ export function createApp() {
   app.use(
     cors({
       origin(origin, callback) {
-        if (!origin || allowedOrigins.has(origin) || localhostPattern.test(origin)) {
+        if (!origin || allowedOrigins.has(origin) || localhostPattern.test(origin) || vercelAppPattern.test(origin)) {
           callback(null, true);
           return;
         }
