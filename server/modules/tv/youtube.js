@@ -5,7 +5,7 @@ const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
 function ensureYouTubeConfigured() {
   if (!config.youtubeApiKey) {
-    throw new Error("YOUTUBE_API_KEY is required");
+    throw new Error("YouTube integration is not configured. Add YOUTUBE_API_KEY in Vercel Project Settings -> Environment Variables and redeploy.");
   }
 }
 
