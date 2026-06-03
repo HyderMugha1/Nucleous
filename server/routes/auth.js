@@ -3,6 +3,8 @@ import { requireAuth } from "../middleware/auth.js";
 import { supabase, supabaseAdmin } from "../supabase.js";
 
 const router = express.Router();
+const MISSING_SERVICE_ROLE_MESSAGE =
+  "The backend is missing SUPABASE_SERVICE_ROLE_KEY. Add it in Vercel Project Settings -> Environment Variables and redeploy.";
 
 function isSupabaseConnectivityError(error) {
   if (!(error instanceof Error)) return false;
@@ -12,6 +14,10 @@ function isSupabaseConnectivityError(error) {
 
 function getSupabaseConnectivityMessage() {
   return "Unable to reach Supabase. Check SUPABASE_URL, VITE_SUPABASE_URL, and your DNS/network connection.";
+}
+
+function isMissingServiceRoleError(error) {
+  return error instanceof Error && error.message.includes("SUPABASE_SERVICE_ROLE_KEY");
 }
 
 function buildSlug(value) {
@@ -234,7 +240,7 @@ async function getSupabaseUserFromAccessToken(accessToken) {
 router.post("/signup", async (req, res) => {
   try {
     if (!supabaseAdmin) {
-      return res.status(500).json({ message: "SUPABASE_SERVICE_ROLE_KEY is required for signup" });
+      return res.status(503).json({ message: MISSING_SERVICE_ROLE_MESSAGE });
     }
 
     const {
@@ -450,7 +456,7 @@ router.post("/oauth/exchange", async (req, res) => {
 router.post("/oauth/complete-signup", async (req, res) => {
   try {
     if (!supabaseAdmin) {
-      return res.status(500).json({ message: "SUPABASE_SERVICE_ROLE_KEY is required for OAuth signup" });
+      return res.status(503).json({ message: MISSING_SERVICE_ROLE_MESSAGE });
     }
 
     const { accessToken, fullName, company, contactNumber, competitors, role, platform } = req.body;
@@ -524,6 +530,13 @@ router.post("/login", async (req, res) => {
     try {
       snapshot = await getMembershipSnapshot(authData.user.id);
     } catch (snapshotError) {
+      if (isMissingServiceRoleError(snapshotError)) {
+        return res.status(503).json({
+          message: MISSING_SERVICE_ROLE_MESSAGE,
+          error: snapshotError.message,
+        });
+      }
+
       return res.status(409).json({
         message: "Your account exists, but the workspace profile is incomplete. Please contact support or complete onboarding again.",
         error: snapshotError instanceof Error ? snapshotError.message : "Membership snapshot failed",

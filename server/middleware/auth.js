@@ -1,5 +1,8 @@
 import { supabaseAdmin } from "../supabase.js";
 
+const MISSING_SERVICE_ROLE_MESSAGE =
+  "The backend is missing SUPABASE_SERVICE_ROLE_KEY. Add it in Vercel Project Settings -> Environment Variables and redeploy.";
+
 async function getAuthenticatedSupabaseUser(accessToken) {
   const { data, error } = await supabaseAdmin.auth.getUser(accessToken);
 
@@ -48,7 +51,7 @@ export async function requireAuth(req, res, next) {
     }
 
     if (!supabaseAdmin) {
-      return res.status(500).json({ message: "SUPABASE_SERVICE_ROLE_KEY is required for protected API routes" });
+      return res.status(503).json({ message: MISSING_SERVICE_ROLE_MESSAGE });
     }
 
     const user = await getAuthenticatedSupabaseUser(accessToken);
@@ -63,7 +66,11 @@ export async function requireAuth(req, res, next) {
     };
 
     return next();
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("SUPABASE_SERVICE_ROLE_KEY")) {
+      return res.status(503).json({ message: MISSING_SERVICE_ROLE_MESSAGE });
+    }
+
     return res.status(401).json({ message: "Invalid or expired session" });
   }
 }
