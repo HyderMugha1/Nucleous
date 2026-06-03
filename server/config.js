@@ -1,9 +1,13 @@
 import dns from "node:dns/promises";
 
+const DEFAULT_SUPABASE_URL = "https://csuzochqnfkbmtgglvje.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXpvY2hxbmZrYm10Z2dsdmplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NjAwNTMsImV4cCI6MjA5MzAzNjA1M30.EOmBXe5oOQ98jOHSbM95PsxZTdQ0JKvAbDgtHuFFVfk";
+
 export const config = {
   port: Number(process.env.PORT || 5000),
-  supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
+  supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL,
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   supabaseDbUrl: process.env.SUPABASE_DB_URL || "",
   clientUrl: process.env.CLIENT_URL || "http://localhost:8080",
