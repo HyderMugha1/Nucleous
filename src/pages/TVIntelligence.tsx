@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   createTVYouTubeChannel,
+  getTVIntegrationStatus,
   getTVTikTokAccounts,
   getTVTikTokConnectUrl,
   getTVTikTokVideos,
@@ -35,6 +36,11 @@ function formatDay(value: string) {
 
 export default function TVIntelligence() {
   const { user } = useAuth();
+  const [integrationStatus, setIntegrationStatus] = useState({
+    youtubeConfigured: false,
+    geminiConfigured: false,
+    tiktokConfigured: false,
+  });
   const [segments, setSegments] = useState<TVSegmentRecord[]>([]);
   const [youtubeChannels, setYoutubeChannels] = useState<TVYouTubeChannelRecord[]>([]);
   const [youtubeVideos, setYoutubeVideos] = useState<TVYouTubeVideoRecord[]>([]);
@@ -58,9 +64,17 @@ export default function TVIntelligence() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([getTVSegments({ limit: 100 }), getTVYouTubeChannels(), getTVYouTubeVideos({ limit: 100 }), getTVTikTokAccounts(), getTVTikTokVideos({ limit: 24 })])
-      .then(([segmentsResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse]) => {
+    Promise.all([
+      getTVIntegrationStatus(),
+      getTVSegments({ limit: 100 }),
+      getTVYouTubeChannels(),
+      getTVYouTubeVideos({ limit: 100 }),
+      getTVTikTokAccounts(),
+      getTVTikTokVideos({ limit: 24 }),
+    ])
+      .then(([statusResponse, segmentsResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse]) => {
         if (!active) return;
+        setIntegrationStatus(statusResponse.integrations);
         setSegments(segmentsResponse.items);
         setYoutubeChannels(channelsResponse.items);
         setYoutubeVideos(videosResponse.items);
@@ -334,11 +348,20 @@ export default function TVIntelligence() {
             value={youtubeChannelId}
             onChange={(event) => setYoutubeChannelId(event.target.value)}
             placeholder="Add YouTube channel ID"
+            disabled={!integrationStatus.youtubeConfigured}
           />
-          <Button onClick={() => void addYouTubeChannel()} disabled={!youtubeChannelId.trim() || actionLoading === "add-channel"}>
+          <Button
+            onClick={() => void addYouTubeChannel()}
+            disabled={!integrationStatus.youtubeConfigured || !youtubeChannelId.trim() || actionLoading === "add-channel"}
+          >
             Connect Channel
           </Button>
         </div>
+        {!integrationStatus.youtubeConfigured && (
+          <p className="text-xs text-muted-foreground">
+            Add `YOUTUBE_API_KEY` in Vercel Project Settings -&gt; Environment Variables, then redeploy to enable channel connection.
+          </p>
+        )}
 
         <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-3">
@@ -351,7 +374,12 @@ export default function TVIntelligence() {
                       <p className="text-sm font-semibold text-foreground">{channel.channel_name}</p>
                       <p className="text-xs text-muted-foreground">{channel.youtube_channel_id}</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => void queueChannelSync(channel.id)} disabled={actionLoading === `sync-${channel.id}`}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void queueChannelSync(channel.id)}
+                      disabled={!integrationStatus.youtubeConfigured || actionLoading === `sync-${channel.id}`}
+                    >
                       Sync
                     </Button>
                   </div>
@@ -397,10 +425,15 @@ export default function TVIntelligence() {
             <h2 className="text-lg font-semibold text-foreground">TikTok Video Feed</h2>
             <p className="text-sm text-muted-foreground mt-1">Connect a TikTok creator account with TikTok Login + Display API, then sync recent public videos into this workspace.</p>
           </div>
-          <Button onClick={() => void connectTikTok()} disabled={actionLoading === "tiktok-connect"}>
+          <Button onClick={() => void connectTikTok()} disabled={!integrationStatus.tiktokConfigured || actionLoading === "tiktok-connect"}>
             Connect TikTok
           </Button>
         </div>
+        {!integrationStatus.tiktokConfigured && (
+          <p className="text-xs text-muted-foreground">
+            Add `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`, and `CLIENT_URL` in Vercel, then redeploy to enable TikTok connection.
+          </p>
+        )}
 
         <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-3">
@@ -414,7 +447,12 @@ export default function TVIntelligence() {
                       <p className="truncate text-xs text-muted-foreground">{account.profile_url || account.tiktok_open_id}</p>
                       <p className="mt-1 text-xs text-muted-foreground">Last synced: {account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : "Never"}</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => void queueTikTokSync(account.id)} disabled={actionLoading === `tiktok-sync-${account.id}`}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void queueTikTokSync(account.id)}
+                      disabled={!integrationStatus.tiktokConfigured || actionLoading === `tiktok-sync-${account.id}`}
+                    >
                       Sync
                     </Button>
                   </div>
@@ -465,6 +503,11 @@ export default function TVIntelligence() {
 
       <div className="glass-premium rounded-2xl p-5 space-y-3">
         <h3 className="text-sm font-semibold text-foreground">YouTube Video Processing</h3>
+        {!integrationStatus.geminiConfigured && (
+          <p className="text-xs text-muted-foreground">
+            Add `GEMINI_API_KEY` in Vercel to enable transcript processing and retries.
+          </p>
+        )}
         {youtubeVideos.length > 0 ? (
           youtubeVideos.slice(0, 12).map((video) => (
             <div key={video.id} className="flex flex-col gap-3 rounded-xl border border-border/40 bg-muted/20 p-4 md:flex-row md:items-center md:justify-between">
@@ -475,11 +518,21 @@ export default function TVIntelligence() {
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => void queueVideoProcessing(video.id)} disabled={actionLoading === `process-${video.id}`}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void queueVideoProcessing(video.id)}
+                  disabled={!integrationStatus.geminiConfigured || actionLoading === `process-${video.id}`}
+                >
                   Process
                 </Button>
                 {video.processing_status === "failed" && (
-                  <Button variant="outline" size="sm" onClick={() => void queueRetry(video.id)} disabled={actionLoading === `retry-${video.id}`}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void queueRetry(video.id)}
+                    disabled={!integrationStatus.geminiConfigured || actionLoading === `retry-${video.id}`}
+                  >
                     <RotateCcw className="h-3.5 w-3.5" />
                     Retry
                   </Button>

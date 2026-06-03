@@ -1715,6 +1715,16 @@ export async function getTVTikTokVideos(params?: {
   };
 }
 
+export async function getTVIntegrationStatus() {
+  return request<{
+    integrations: {
+      youtubeConfigured: boolean;
+      geminiConfigured: boolean;
+      tiktokConfigured: boolean;
+    };
+  }>("/tv/status");
+}
+
 export async function createTVYouTubeChannel(youtubeChannelId: string) {
   return request<{ item: TVYouTubeChannelRecord; queued: boolean }>("/tv/channels", {
     method: "POST",

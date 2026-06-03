@@ -3,6 +3,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler, created, ok } from "../utils/http.js";
 import { parsePagination } from "../utils/query.js";
 import { supabaseAdmin } from "../supabase.js";
+import { config } from "../config.js";
 import {
   createTvChannel,
   getTvProcessingLogs,
@@ -15,6 +16,19 @@ import {
 
 const router = express.Router();
 router.use(requireAuth);
+
+router.get(
+  "/status",
+  asyncHandler(async (_req, res) => {
+    return ok(res, {
+      integrations: {
+        youtubeConfigured: Boolean(config.youtubeApiKey),
+        geminiConfigured: Boolean(config.geminiApiKey),
+        tiktokConfigured: Boolean(config.tiktokClientKey && config.tiktokClientSecret && config.tiktokRedirectUri),
+      },
+    });
+  }),
+);
 
 router.get(
   "/",
