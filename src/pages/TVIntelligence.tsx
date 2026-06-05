@@ -67,6 +67,16 @@ function statusTone(status: string) {
   return "bg-slate-500/12 text-slate-700 border-slate-500/20";
 }
 
+function normalizeTranscriptionError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Please try again.";
+
+  if (/quota|rate limit/i.test(message)) {
+    return "Gemini transcription quota is temporarily exhausted. Wait a short while, then retry this video.";
+  }
+
+  return message;
+}
+
 const EMPTY_SUMMARY: TVDashboardSummary = {
   channels: 0,
   videos: 0,
@@ -235,7 +245,7 @@ export default function TVIntelligence() {
     } catch (error) {
       toast({
         title: retry ? "Retry failed" : "Unable to transcribe video",
-        description: error instanceof Error ? error.message : "Please try again.",
+        description: normalizeTranscriptionError(error),
         variant: "destructive",
       });
     } finally {

@@ -7,6 +7,20 @@ function ensureGeminiConfigured() {
   }
 }
 
+function normalizeGeminiError(message) {
+  const rawMessage = String(message || "").trim();
+  const quotaMatch = /retry in\s+([0-9.]+)s/i.exec(rawMessage);
+  const quotaSeconds = quotaMatch ? Math.max(1, Math.ceil(Number(quotaMatch[1]))) : null;
+
+  if (/quota exceeded|rate limit|429/i.test(rawMessage)) {
+    return quotaSeconds
+      ? `Gemini transcription quota is temporarily exhausted. Wait about ${quotaSeconds} seconds and try again.`
+      : "Gemini transcription quota is temporarily exhausted. Please wait a minute and try again.";
+  }
+
+  return rawMessage || "Gemini transcription request failed";
+}
+
 const TRANSCRIPTION_PROMPT = `You are a broadcast transcription engine.
 
 Transcribe the spoken content of this video into subtitle-ready segments.
@@ -56,7 +70,7 @@ export async function transcribeYouTubeVideoWithGemini(youtubeUrl) {
 
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.error?.message || "Gemini transcription request failed");
+    throw new Error(normalizeGeminiError(data.error?.message));
   }
 
   const rawText = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
