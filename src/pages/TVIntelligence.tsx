@@ -5,20 +5,14 @@ import {
   createTVYouTubeChannel,
   getTVDashboard,
   getTVIntegrationStatus,
-  getTVTikTokAccounts,
-  getTVTikTokConnectUrl,
-  getTVTikTokVideos,
   getTVYouTubeChannels,
   getTVYouTubeVideos,
   processTVYouTubeVideo,
   retryTVVideoProcessing,
   searchTVTranscripts,
-  syncTVTikTokAccount,
   syncTVYouTubeChannel,
   type TVDashboardSummary,
   type TVRecentTranscriptRecord,
-  type TVTikTokAccountRecord,
-  type TVTikTokVideoRecord,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
   type TVYouTubeVideoRecord,
@@ -53,10 +47,16 @@ function formatDuration(seconds?: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = seconds % 60;
+
   if (hours > 0) {
     return `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
   }
+
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function compactNumber(value?: number) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
 }
 
 function statusTone(status: string) {
@@ -65,10 +65,6 @@ function statusTone(status: string) {
   if (status === "queued") return "bg-amber-500/12 text-amber-700 border-amber-500/20";
   if (status === "failed") return "bg-rose-500/12 text-rose-700 border-rose-500/20";
   return "bg-slate-500/12 text-slate-700 border-slate-500/20";
-}
-
-function compactNumber(value?: number) {
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
 }
 
 const EMPTY_SUMMARY: TVDashboardSummary = {
@@ -88,18 +84,14 @@ export default function TVIntelligence() {
   const [integrationStatus, setIntegrationStatus] = useState<{
     youtubeConfigured: boolean | null;
     geminiConfigured: boolean | null;
-    tiktokConfigured: boolean | null;
   }>({
     youtubeConfigured: null,
     geminiConfigured: null,
-    tiktokConfigured: null,
   });
   const [summary, setSummary] = useState<TVDashboardSummary>(EMPTY_SUMMARY);
   const [recentTranscripts, setRecentTranscripts] = useState<TVRecentTranscriptRecord[]>([]);
   const [youtubeChannels, setYoutubeChannels] = useState<TVYouTubeChannelRecord[]>([]);
   const [youtubeVideos, setYoutubeVideos] = useState<TVYouTubeVideoRecord[]>([]);
-  const [tiktokAccounts, setTikTokAccounts] = useState<TVTikTokAccountRecord[]>([]);
-  const [tiktokVideos, setTikTokVideos] = useState<TVTikTokVideoRecord[]>([]);
   const [transcriptResults, setTranscriptResults] = useState<TVTranscriptSearchRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -119,7 +111,7 @@ export default function TVIntelligence() {
     try {
       const selectedChannel = youtubeChannels.find((channel) => channel.channel_name === channelFilter);
 
-      const [statusResponse, dashboardResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse] = await Promise.all([
+      const [statusResponse, dashboardResponse, channelsResponse, videosResponse] = await Promise.all([
         getTVIntegrationStatus(),
         getTVDashboard(),
         getTVYouTubeChannels(),
@@ -128,17 +120,16 @@ export default function TVIntelligence() {
           search: deferredVideoSearch.trim() || undefined,
           channelId: selectedChannel?.id,
         }),
-        getTVTikTokAccounts(),
-        getTVTikTokVideos({ limit: 8 }),
       ]);
 
-      setIntegrationStatus(statusResponse.integrations);
+      setIntegrationStatus({
+        youtubeConfigured: statusResponse.integrations.youtubeConfigured,
+        geminiConfigured: statusResponse.integrations.geminiConfigured,
+      });
       setSummary(dashboardResponse.summary);
       setRecentTranscripts(dashboardResponse.recentTranscripts);
       setYoutubeChannels(channelsResponse.items);
       setYoutubeVideos(videosResponse.items);
-      setTikTokAccounts(tiktokAccountsResponse.items);
-      setTikTokVideos(tiktokVideosResponse.items);
     } catch (error) {
       toast({
         title: "Unable to load TV intelligence",
@@ -161,35 +152,11 @@ export default function TVIntelligence() {
     void loadTvPage();
   }, [loadTvPage, loading]);
 
-  useEffect(() => {
-    const query = new URLSearchParams(window.location.search);
-    const tiktokStatus = query.get("tiktok");
-    if (!tiktokStatus) return;
-
-    if (tiktokStatus === "connected") {
-      toast({
-        title: "TikTok connected",
-        description: "TikTok account connected successfully.",
-      });
-      void loadTvPage();
-    } else if (tiktokStatus === "error") {
-      toast({
-        title: "TikTok connection failed",
-        description: "Check your TikTok app credentials and redirect URI settings.",
-        variant: "destructive",
-      });
-    }
-
-    query.delete("tiktok");
-    const nextQuery = query.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
-    window.history.replaceState({}, "", nextUrl);
-  }, [loadTvPage]);
-
   const channelOptions = useMemo(() => ["All", ...youtubeChannels.map((channel) => channel.channel_name)], [youtubeChannels]);
 
   const publishingTrend = useMemo(() => {
     const buckets = new Map<string, number>();
+
     youtubeVideos.forEach((video) => {
       const key = formatDay(video.published_at);
       buckets.set(key, (buckets.get(key) || 0) + 1);
@@ -286,6 +253,7 @@ export default function TVIntelligence() {
       setActionLoading("search-transcripts");
       const response = await searchTVTranscripts(transcriptSearch.trim());
       setTranscriptResults(response.items);
+
       if (response.items.length === 0) {
         toast({
           title: "No transcript match found",
@@ -295,42 +263,6 @@ export default function TVIntelligence() {
     } catch (error) {
       toast({
         title: "Unable to search transcripts",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const connectTikTok = async () => {
-    try {
-      setActionLoading("tiktok-connect");
-      const response = await getTVTikTokConnectUrl();
-      window.location.href = response.url;
-    } catch (error) {
-      toast({
-        title: "Unable to start TikTok connection",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const syncTikTok = async (accountId: string) => {
-    try {
-      setActionLoading(`tiktok-sync-${accountId}`);
-      await syncTVTikTokAccount(accountId);
-      toast({
-        title: "TikTok sync started",
-        description: "Recent TikTok videos will be refreshed for this workspace.",
-      });
-      await loadTvPage();
-    } catch (error) {
-      toast({
-        title: "Unable to sync TikTok account",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -350,6 +282,9 @@ export default function TVIntelligence() {
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Monitor connected YouTube channels, open videos on YouTube, run transcript generation, and search directly into spoken moments.
           </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            TikTok is paused for now and will be re-enabled once your official TikTok API access is ready.
+          </p>
         </div>
         <Button variant="outline" onClick={() => void loadTvPage({ withGlobalLoader: true })} disabled={loading}>
           <RefreshCw className="mr-2 h-4 w-4" />
@@ -360,7 +295,7 @@ export default function TVIntelligence() {
       <PageVisualDeck
         eyebrow="Live Workspace Feed"
         title="Channel sync, video coverage, and transcript health"
-        description="These cards now reflect real connected channels and transcript progress from your workspace."
+        description="These cards now reflect real connected YouTube channels and transcript progress from your workspace."
         cards={[
           {
             kind: "line",
@@ -731,83 +666,7 @@ export default function TVIntelligence() {
         </div>
       </div>
 
-      <div className="glass-premium rounded-2xl p-5 space-y-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">TikTok Feed</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Connect a TikTok creator account to bring recent public TikTok content into the same media workspace.
-            </p>
-          </div>
-          <Button onClick={() => void connectTikTok()} disabled={integrationStatus.tiktokConfigured === false || actionLoading === "tiktok-connect"}>
-            Connect TikTok
-          </Button>
-        </div>
-
-        {integrationStatus.tiktokConfigured === false ? (
-          <p className="text-xs text-muted-foreground">
-            Add `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`, and `CLIENT_URL` in Vercel, then redeploy to enable TikTok connection.
-          </p>
-        ) : null}
-
-        <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">Connected TikTok Accounts</h3>
-            {tiktokAccounts.length > 0 ? (
-              tiktokAccounts.map((account) => (
-                <div key={account.id} className="rounded-2xl border border-border/40 bg-background/30 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{account.display_name}</p>
-                      <p className="truncate text-xs text-muted-foreground">{account.profile_url || account.tiktok_open_id}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Last synced: {formatDateTime(account.last_synced_at)}</p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void syncTikTok(account.id)}
-                      disabled={integrationStatus.tiktokConfigured === false || actionLoading === `tiktok-sync-${account.id}`}
-                    >
-                      Sync
-                    </Button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">No TikTok accounts connected yet.</p>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">Recent TikTok Videos</h3>
-            {tiktokVideos.length > 0 ? (
-              tiktokVideos.map((video) => (
-                <div key={video.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{video.title || video.video_description || "Untitled TikTok video"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {video.tv_tiktok_accounts?.display_name || "TikTok creator"} • {formatDay(video.published_at)}
-                      </p>
-                    </div>
-                    <a href={video.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                      Open
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
-                  {video.cover_image_url ? (
-                    <img src={video.cover_image_url} alt={video.title || "TikTok video"} className="h-44 w-full rounded-xl object-cover" />
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">Synced TikTok videos will appear here after account sync runs.</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {loading ? <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading TV workspace…</div> : null}
+      {loading ? <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading TV workspace...</div> : null}
     </div>
   );
 }
