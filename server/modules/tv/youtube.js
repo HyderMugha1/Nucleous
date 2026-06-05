@@ -11,7 +11,10 @@ function ensureYouTubeConfigured() {
 
 async function youtubeGet(path, params) {
   ensureYouTubeConfigured();
-  const query = new URLSearchParams({ ...params, key: config.youtubeApiKey });
+  const filteredParams = Object.fromEntries(
+    Object.entries({ ...params, key: config.youtubeApiKey }).filter(([, value]) => value !== undefined && value !== null && value !== ""),
+  );
+  const query = new URLSearchParams(filteredParams);
   const response = await fetch(`${YOUTUBE_API_BASE}${path}?${query.toString()}`);
   const data = await response.json();
   if (!response.ok) {
