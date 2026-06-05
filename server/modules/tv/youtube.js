@@ -153,7 +153,10 @@ export async function fetchChannelMetadata(youtubeChannelInput) {
   };
 }
 
-export async function fetchAllChannelVideos(uploadsPlaylistId) {
+const DEFAULT_CHANNEL_SYNC_LIMIT = 200;
+
+export async function fetchAllChannelVideos(uploadsPlaylistId, options = {}) {
+  const maxVideos = Math.max(1, Number(options.maxVideos || DEFAULT_CHANNEL_SYNC_LIMIT));
   const playlistItems = [];
   let pageToken = undefined;
 
@@ -167,15 +170,17 @@ export async function fetchAllChannelVideos(uploadsPlaylistId) {
 
     playlistItems.push(...(data.items || []));
     pageToken = data.nextPageToken;
-  } while (pageToken);
+  } while (pageToken && playlistItems.length < maxVideos);
 
   const videoIds = playlistItems
     .map((item) => item.contentDetails?.videoId)
     .filter(Boolean);
 
+  const limitedVideoIds = videoIds.slice(0, maxVideos);
+
   const chunks = [];
-  for (let index = 0; index < videoIds.length; index += 50) {
-    chunks.push(videoIds.slice(index, index + 50));
+  for (let index = 0; index < limitedVideoIds.length; index += 50) {
+    chunks.push(limitedVideoIds.slice(index, index + 50));
   }
 
   const details = [];
