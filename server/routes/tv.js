@@ -1,5 +1,7 @@
 import express from "express";
 import { requireAuth } from "../middleware/auth.js";
+import { config } from "../config.js";
+import { supabaseAdmin } from "../supabase.js";
 import { asyncHandler, created, ok } from "../utils/http.js";
 import { parsePagination } from "../utils/query.js";
 import {
