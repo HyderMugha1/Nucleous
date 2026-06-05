@@ -102,7 +102,42 @@ export async function listTvChannels(organizationId) {
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
-  return data || [];
+
+  const channels = data || [];
+  const enrichedChannels = await Promise.all(
+    channels.map(async (channel) => {
+      const [videosCountResponse, completedCountResponse, latestVideoResponse] = await Promise.all([
+        supabaseAdmin
+          .from("tv_youtube_videos")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", organizationId)
+          .eq("channel_id", channel.id),
+        supabaseAdmin
+          .from("tv_youtube_videos")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", organizationId)
+          .eq("channel_id", channel.id)
+          .not("transcript_text", "is", null),
+        supabaseAdmin
+          .from("tv_youtube_videos")
+          .select("published_at")
+          .eq("organization_id", organizationId)
+          .eq("channel_id", channel.id)
+          .order("published_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      return {
+        ...channel,
+        video_count: videosCountResponse.count || 0,
+        transcribed_video_count: completedCountResponse.count || 0,
+        latest_video_published_at: latestVideoResponse.data?.published_at || null,
+      };
+    }),
+  );
+
+  return enrichedChannels;
 }
 
 export async function queueTvJob({ organizationId, channelId = null, videoId = null, jobType, provider = null, payload = {} }) {
@@ -339,7 +374,7 @@ export async function queueTikTokAccountSync({ organizationId, accountId }) {
   });
 }
 
-export async function syncChannelVideos({ organizationId, channelId }) {
+export async function syncChannelVideos({ organizationId, channelId, maxVideos = 40 }) {
   ensureAdminClient();
 
   const { data: channel, error: channelError } = await supabaseAdmin
@@ -354,7 +389,7 @@ export async function syncChannelVideos({ organizationId, channelId }) {
   }
 
   const metadata = await fetchChannelMetadata(channel.youtube_channel_id);
-  const videos = await fetchAllChannelVideos(metadata.uploadsPlaylistId);
+  const videos = await fetchAllChannelVideos(metadata.uploadsPlaylistId, { maxVideos });
 
   const upsertRows = videos.map((video) => ({
     organization_id: organizationId,
@@ -366,7 +401,6 @@ export async function syncChannelVideos({ organizationId, channelId }) {
     published_at: video.publishedAt,
     duration_iso: video.durationIso,
     duration_seconds: video.durationSeconds,
-    processing_status: "pending",
   }));
 
   const { data: savedVideos, error: upsertError } = await supabaseAdmin
@@ -382,22 +416,6 @@ export async function syncChannelVideos({ organizationId, channelId }) {
     .from("tv_youtube_channels")
     .update({ last_synced_at: new Date().toISOString(), status: "active" })
     .eq("id", channel.id);
-
-  for (const video of savedVideos || []) {
-    await queueTvJob({
-      organizationId,
-      channelId: channel.id,
-      videoId: video.id,
-      jobType: "video_transcription",
-      provider: "gemini",
-      payload: { youtubeVideoId: video.youtube_video_id },
-    });
-
-    await supabaseAdmin
-      .from("tv_youtube_videos")
-      .update({ processing_status: "queued" })
-      .eq("id", video.id);
-  }
 
   return { channel, videos: savedVideos || [] };
 }
@@ -417,10 +435,66 @@ export async function listTvVideos({ organizationId, channelId = null, search = 
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return { items: data || [], total: count || 0 };
+
+  const items = data || [];
+  const videoIds = items.map((item) => item.id).filter(Boolean);
+
+  let transcriptCounts = new Map();
+  let latestLogs = new Map();
+
+  if (videoIds.length > 0) {
+    const [{ data: transcriptRows, error: transcriptError }, { data: logRows, error: logError }] = await Promise.all([
+      supabaseAdmin
+        .from("tv_transcript_segments")
+        .select("video_id")
+        .eq("organization_id", organizationId)
+        .in("video_id", videoIds),
+      supabaseAdmin
+        .from("tv_processing_logs")
+        .select("video_id, job_status, error_message, created_at")
+        .eq("organization_id", organizationId)
+        .in("video_id", videoIds)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (transcriptError) throw new Error(transcriptError.message);
+    if (logError) throw new Error(logError.message);
+
+    transcriptCounts = new Map();
+    for (const row of transcriptRows || []) {
+      transcriptCounts.set(row.video_id, (transcriptCounts.get(row.video_id) || 0) + 1);
+    }
+
+    latestLogs = new Map();
+    for (const row of logRows || []) {
+      if (!row.video_id || latestLogs.has(row.video_id)) continue;
+      latestLogs.set(row.video_id, row);
+    }
+  }
+
+  return {
+    items: items.map((item) => {
+      const latestLog = latestLogs.get(item.id);
+      const transcriptPreview = item.transcript_text
+        ? String(item.transcript_text).replace(/\s+/g, " ").trim().slice(0, 280)
+        : null;
+      const transcriptCount = transcriptCounts.get(item.id) || 0;
+      const effectiveStatus = transcriptCount > 0 || transcriptPreview ? "completed" : item.processing_status;
+
+      return {
+        ...item,
+        processing_status: effectiveStatus,
+        transcript_segment_count: transcriptCount,
+        transcript_preview: transcriptPreview,
+        latest_job_status: latestLog?.job_status || null,
+        latest_job_error: latestLog?.error_message || null,
+      };
+    }),
+    total: count || 0,
+  };
 }
 
-export async function processVideoTranscription({ organizationId, videoId }) {
+export async function processVideoTranscription({ organizationId, videoId, generateSrt = true }) {
   ensureAdminClient();
 
   const { data: video, error: videoError } = await supabaseAdmin
@@ -439,52 +513,55 @@ export async function processVideoTranscription({ organizationId, videoId }) {
     .update({ processing_status: "processing" })
     .eq("id", video.id);
 
-  const transcript = await transcribeYouTubeVideoWithGemini(video.youtube_url);
-  const normalizedSegments = transcript.segments.map((segment) => ({
-    organization_id: organizationId,
-    video_id: video.id,
-    segment_index: segment.segment_index,
-    start_sec: segment.start_sec,
-    end_sec: segment.end_sec,
-    text: segment.text,
-    searchable_text: normalizeSearchableText(segment.text),
-  }));
+  try {
+    const transcript = await transcribeYouTubeVideoWithGemini(video.youtube_url);
+    const normalizedSegments = transcript.segments.map((segment) => ({
+      organization_id: organizationId,
+      video_id: video.id,
+      segment_index: segment.segment_index,
+      start_sec: segment.start_sec,
+      end_sec: segment.end_sec,
+      text: segment.text,
+      searchable_text: normalizeSearchableText(segment.text),
+    }));
 
-  await supabaseAdmin.from("tv_transcript_segments").delete().eq("video_id", video.id);
+    await supabaseAdmin.from("tv_transcript_segments").delete().eq("video_id", video.id);
 
-  if (normalizedSegments.length > 0) {
-    const { error: segmentError } = await supabaseAdmin
-      .from("tv_transcript_segments")
-      .insert(normalizedSegments);
+    if (normalizedSegments.length > 0) {
+      const { error: segmentError } = await supabaseAdmin
+        .from("tv_transcript_segments")
+        .insert(normalizedSegments);
 
-    if (segmentError) {
-      throw new Error(segmentError.message);
+      if (segmentError) {
+        throw new Error(segmentError.message);
+      }
     }
+
+    const transcriptText = normalizedSegments.map((segment) => segment.text).join(" ");
+
+    await supabaseAdmin
+      .from("tv_youtube_videos")
+      .update({
+        transcript_text: transcriptText,
+        transcript_language: transcript.language,
+        processing_status: generateSrt ? "processing" : "completed",
+        last_processed_at: new Date().toISOString(),
+        transcript_version: (video.transcript_version || 0) + 1,
+      })
+      .eq("id", video.id);
+
+    if (generateSrt) {
+      await generateAndStoreSrt({ organizationId, videoId: video.id });
+    }
+
+    return { videoId: video.id, segmentCount: normalizedSegments.length };
+  } catch (error) {
+    await supabaseAdmin
+      .from("tv_youtube_videos")
+      .update({ processing_status: "failed", last_processed_at: new Date().toISOString() })
+      .eq("id", video.id);
+    throw error;
   }
-
-  const transcriptText = normalizedSegments.map((segment) => segment.text).join(" ");
-
-  await supabaseAdmin
-    .from("tv_youtube_videos")
-    .update({
-      transcript_text: transcriptText,
-      transcript_language: transcript.language,
-      processing_status: "queued",
-      last_processed_at: new Date().toISOString(),
-      transcript_version: (video.transcript_version || 0) + 1,
-    })
-    .eq("id", video.id);
-
-  await queueTvJob({
-    organizationId,
-    channelId: video.channel_id,
-    videoId: video.id,
-    jobType: "srt_generation",
-    provider: "supabase-storage",
-    payload: { youtubeVideoId: video.youtube_video_id },
-  });
-
-  return { videoId: video.id, segmentCount: normalizedSegments.length };
 }
 
 export async function generateAndStoreSrt({ organizationId, videoId }) {
@@ -576,6 +653,79 @@ export async function getTvProcessingLogs({ organizationId, videoId = null }) {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function getTvDashboard({ organizationId }) {
+  ensureAdminClient();
+
+  const [
+    channelsCountResponse,
+    videosCountResponse,
+    completedCountResponse,
+    processingCountResponse,
+    queuedCountResponse,
+    failedCountResponse,
+    pendingCountResponse,
+    transcriptsCountResponse,
+    latestVideoResponse,
+    latestSyncResponse,
+    recentTranscribedResponse,
+  ] = await Promise.all([
+    supabaseAdmin.from("tv_youtube_channels").select("id", { count: "exact", head: true }).eq("organization_id", organizationId),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).not("transcript_text", "is", null),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("processing_status", "processing").is("transcript_text", null),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("processing_status", "queued").is("transcript_text", null),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("processing_status", "failed").is("transcript_text", null),
+    supabaseAdmin.from("tv_youtube_videos").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("processing_status", "pending").is("transcript_text", null),
+    supabaseAdmin.from("tv_transcript_segments").select("id", { count: "exact", head: true }).eq("organization_id", organizationId),
+    supabaseAdmin
+      .from("tv_youtube_videos")
+      .select("published_at")
+      .eq("organization_id", organizationId)
+      .order("published_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabaseAdmin
+      .from("tv_youtube_channels")
+      .select("last_synced_at")
+      .eq("organization_id", organizationId)
+      .order("last_synced_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabaseAdmin
+      .from("tv_youtube_videos")
+      .select("id, title, youtube_url, thumbnail_url, published_at, processing_status, transcript_text, tv_youtube_channels(channel_name)")
+      .eq("organization_id", organizationId)
+      .not("transcript_text", "is", null)
+      .order("last_processed_at", { ascending: false })
+      .limit(6),
+  ]);
+
+  return {
+    summary: {
+      channels: channelsCountResponse.count || 0,
+      videos: videosCountResponse.count || 0,
+      transcriptSegments: transcriptsCountResponse.count || 0,
+      completedVideos: completedCountResponse.count || 0,
+      processingVideos: processingCountResponse.count || 0,
+      queuedVideos: queuedCountResponse.count || 0,
+      failedVideos: failedCountResponse.count || 0,
+      pendingVideos: pendingCountResponse.count || 0,
+      latestVideoPublishedAt: latestVideoResponse.data?.published_at || null,
+      latestChannelSyncAt: latestSyncResponse.data?.last_synced_at || null,
+    },
+    recentTranscripts: (recentTranscribedResponse.data || []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      youtube_url: item.youtube_url,
+      thumbnail_url: item.thumbnail_url,
+      published_at: item.published_at,
+      processing_status: item.processing_status,
+      transcript_preview: String(item.transcript_text || "").replace(/\s+/g, " ").trim().slice(0, 220),
+      channel_name: item.tv_youtube_channels?.channel_name || "Unknown channel",
+    })),
+  };
 }
 
 export async function markJobFailed(jobId, message, code = null) {

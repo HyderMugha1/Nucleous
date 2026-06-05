@@ -1,41 +1,90 @@
 import { PageVisualDeck } from "@/components/PageVisualDeck";
-import { MediaIntelligencePanel } from "@/components/MediaIntelligencePanel";
-import { SentimentBadge } from "@/components/SentimentBadge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   createTVYouTubeChannel,
+  getTVDashboard,
   getTVIntegrationStatus,
   getTVTikTokAccounts,
   getTVTikTokConnectUrl,
   getTVTikTokVideos,
-  getTVSegments,
   getTVYouTubeChannels,
   getTVYouTubeVideos,
   processTVYouTubeVideo,
   retryTVVideoProcessing,
-  syncTVTikTokAccount,
   searchTVTranscripts,
+  syncTVTikTokAccount,
   syncTVYouTubeChannel,
+  type TVDashboardSummary,
+  type TVRecentTranscriptRecord,
   type TVTikTokAccountRecord,
   type TVTikTokVideoRecord,
-  type TVSegmentRecord,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
   type TVYouTubeVideoRecord,
 } from "@/lib/api";
-import { Calendar, ExternalLink, Mic, RotateCcw, Search, Tv, Youtube } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import {
+  Calendar,
+  Clock3,
+  ExternalLink,
+  RefreshCw,
+  Search,
+  Sparkles,
+  Tv,
+  Video,
+  Youtube,
+} from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-function formatDay(value: string) {
+function formatDay(value?: string | null) {
+  if (!value) return "Unknown";
   return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "Never";
+  return new Date(value).toLocaleString();
+}
+
+function formatDuration(seconds?: number) {
+  if (!seconds || seconds < 1) return "0:00";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function statusTone(status: string) {
+  if (status === "completed") return "bg-emerald-500/12 text-emerald-700 border-emerald-500/20";
+  if (status === "processing") return "bg-sky-500/12 text-sky-700 border-sky-500/20";
+  if (status === "queued") return "bg-amber-500/12 text-amber-700 border-amber-500/20";
+  if (status === "failed") return "bg-rose-500/12 text-rose-700 border-rose-500/20";
+  return "bg-slate-500/12 text-slate-700 border-slate-500/20";
+}
+
+function compactNumber(value?: number) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+}
+
+const EMPTY_SUMMARY: TVDashboardSummary = {
+  channels: 0,
+  videos: 0,
+  transcriptSegments: 0,
+  completedVideos: 0,
+  processingVideos: 0,
+  queuedVideos: 0,
+  failedVideos: 0,
+  pendingVideos: 0,
+  latestVideoPublishedAt: null,
+  latestChannelSyncAt: null,
+};
+
 export default function TVIntelligence() {
-  const { user } = useAuth();
   const [integrationStatus, setIntegrationStatus] = useState<{
     youtubeConfigured: boolean | null;
     geminiConfigured: boolean | null;
@@ -45,84 +94,72 @@ export default function TVIntelligence() {
     geminiConfigured: null,
     tiktokConfigured: null,
   });
-  const [segments, setSegments] = useState<TVSegmentRecord[]>([]);
+  const [summary, setSummary] = useState<TVDashboardSummary>(EMPTY_SUMMARY);
+  const [recentTranscripts, setRecentTranscripts] = useState<TVRecentTranscriptRecord[]>([]);
   const [youtubeChannels, setYoutubeChannels] = useState<TVYouTubeChannelRecord[]>([]);
   const [youtubeVideos, setYoutubeVideos] = useState<TVYouTubeVideoRecord[]>([]);
   const [tiktokAccounts, setTikTokAccounts] = useState<TVTikTokAccountRecord[]>([]);
   const [tiktokVideos, setTikTokVideos] = useState<TVTikTokVideoRecord[]>([]);
   const [transcriptResults, setTranscriptResults] = useState<TVTranscriptSearchRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [channelFilter, setChannelFilter] = useState<string>("All");
-  const [youtubeChannelId, setYoutubeChannelId] = useState("");
-  const [transcriptSearch, setTranscriptSearch] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [youtubeChannelId, setYoutubeChannelId] = useState("");
+  const [videoSearch, setVideoSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState<string>("All");
+  const [transcriptSearch, setTranscriptSearch] = useState("");
 
-  const monitoredChannels = useMemo(() => {
-    const channelSet = new Set<string>();
-    segments.forEach((item) => channelSet.add(item.channel));
-    youtubeChannels.forEach((item) => channelSet.add(item.channel_name));
-    return Array.from(channelSet).sort((a, b) => a.localeCompare(b));
-  }, [segments, youtubeChannels]);
+  const deferredVideoSearch = useDeferredValue(videoSearch);
+
+  const loadTvPage = useCallback(async (options?: { withGlobalLoader?: boolean }) => {
+    const withGlobalLoader = options?.withGlobalLoader ?? false;
+    if (withGlobalLoader) {
+      setLoading(true);
+    }
+
+    try {
+      const selectedChannel = youtubeChannels.find((channel) => channel.channel_name === channelFilter);
+
+      const [statusResponse, dashboardResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse] = await Promise.all([
+        getTVIntegrationStatus(),
+        getTVDashboard(),
+        getTVYouTubeChannels(),
+        getTVYouTubeVideos({
+          limit: 18,
+          search: deferredVideoSearch.trim() || undefined,
+          channelId: selectedChannel?.id,
+        }),
+        getTVTikTokAccounts(),
+        getTVTikTokVideos({ limit: 8 }),
+      ]);
+
+      setIntegrationStatus(statusResponse.integrations);
+      setSummary(dashboardResponse.summary);
+      setRecentTranscripts(dashboardResponse.recentTranscripts);
+      setYoutubeChannels(channelsResponse.items);
+      setYoutubeVideos(videosResponse.items);
+      setTikTokAccounts(tiktokAccountsResponse.items);
+      setTikTokVideos(tiktokVideosResponse.items);
+    } catch (error) {
+      toast({
+        title: "Unable to load TV intelligence",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      if (withGlobalLoader) {
+        setLoading(false);
+      }
+    }
+  }, [channelFilter, deferredVideoSearch, youtubeChannels]);
 
   useEffect(() => {
-    let active = true;
+    void loadTvPage({ withGlobalLoader: true });
+  }, [loadTvPage]);
 
-    Promise.allSettled([
-      getTVIntegrationStatus(),
-      getTVSegments({ limit: 100 }),
-      getTVYouTubeChannels(),
-      getTVYouTubeVideos({ limit: 100 }),
-      getTVTikTokAccounts(),
-      getTVTikTokVideos({ limit: 24 }),
-    ])
-      .then((results) => {
-        if (!active) return;
-
-        const [statusResult, segmentsResult, channelsResult, videosResult, tiktokAccountsResult, tiktokVideosResult] = results;
-
-        if (statusResult.status === "fulfilled") {
-          setIntegrationStatus(statusResult.value.integrations);
-        }
-
-        if (segmentsResult.status === "fulfilled") {
-          setSegments(segmentsResult.value.items);
-        }
-
-        if (channelsResult.status === "fulfilled") {
-          setYoutubeChannels(channelsResult.value.items);
-        }
-
-        if (videosResult.status === "fulfilled") {
-          setYoutubeVideos(videosResult.value.items);
-        }
-
-        if (tiktokAccountsResult.status === "fulfilled") {
-          setTikTokAccounts(tiktokAccountsResult.value.items);
-        }
-
-        if (tiktokVideosResult.status === "fulfilled") {
-          setTikTokVideos(tiktokVideosResult.value.items);
-        }
-
-        const firstRejected = results.find((result) => result.status === "rejected");
-        if (firstRejected?.status === "rejected") {
-          const description = firstRejected.reason instanceof Error ? firstRejected.reason.message : "Some TV data could not be loaded.";
-          toast({
-            title: "TV page loaded partially",
-            description,
-            variant: "destructive",
-          });
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
+  useEffect(() => {
+    if (loading) return;
+    void loadTvPage();
+  }, [loadTvPage, loading]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -132,8 +169,9 @@ export default function TVIntelligence() {
     if (tiktokStatus === "connected") {
       toast({
         title: "TikTok connected",
-        description: "TikTok account connected and sync queued.",
+        description: "TikTok account connected successfully.",
       });
+      void loadTvPage();
     } else if (tiktokStatus === "error") {
       toast({
         title: "TikTok connection failed",
@@ -146,42 +184,45 @@ export default function TVIntelligence() {
     const nextQuery = query.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
     window.history.replaceState({}, "", nextUrl);
-  }, []);
+  }, [loadTvPage]);
 
-  const runTranscriptSearch = async () => {
-    if (!transcriptSearch.trim()) {
-      setTranscriptResults([]);
-      return;
-    }
-    try {
-      const response = await searchTVTranscripts(transcriptSearch.trim());
-      setTranscriptResults(response.items);
-      if (response.items.length === 0) {
-        toast({
-          title: "Search complete",
-          description: response.message || "No record found.",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Unable to search transcripts",
-        description: error instanceof Error ? error.message : "Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
+  const channelOptions = useMemo(() => ["All", ...youtubeChannels.map((channel) => channel.channel_name)], [youtubeChannels]);
+
+  const publishingTrend = useMemo(() => {
+    const buckets = new Map<string, number>();
+    youtubeVideos.forEach((video) => {
+      const key = formatDay(video.published_at);
+      buckets.set(key, (buckets.get(key) || 0) + 1);
+    });
+
+    return Array.from(buckets.entries()).map(([date, count]) => ({ date, count })).slice(-8);
+  }, [youtubeVideos]);
+
+  const processingBreakdown = useMemo(
+    () => [
+      { label: "Done", value: summary.completedVideos },
+      { label: "Queued", value: summary.queuedVideos },
+      { label: "Running", value: summary.processingVideos },
+      { label: "Failed", value: summary.failedVideos },
+      { label: "Pending", value: summary.pendingVideos },
+    ],
+    [summary],
+  );
 
   const addYouTubeChannel = async () => {
     if (!youtubeChannelId.trim()) return;
+
     try {
       setActionLoading("add-channel");
       const response = await createTVYouTubeChannel(youtubeChannelId.trim());
-      setYoutubeChannels((current) => [response.item, ...current]);
-      setYoutubeChannelId("");
       toast({
-        title: "YouTube channel connected",
-        description: "Channel saved and initial sync queued.",
+        title: "Channel connected",
+        description: response.syncSummary?.syncedVideos
+          ? `Imported ${response.syncSummary.syncedVideos} recent videos from YouTube.`
+          : "Channel connected successfully.",
       });
+      setYoutubeChannelId("");
+      await loadTvPage();
     } catch (error) {
       toast({
         title: "Unable to connect channel",
@@ -193,17 +234,18 @@ export default function TVIntelligence() {
     }
   };
 
-  const queueChannelSync = async (channelId: string) => {
+  const refreshChannel = async (channelId: string) => {
     try {
       setActionLoading(`sync-${channelId}`);
-      await syncTVYouTubeChannel(channelId);
+      const response = await syncTVYouTubeChannel(channelId);
       toast({
-        title: "Channel sync queued",
-        description: "Videos will start syncing in the background worker.",
+        title: "Channel refreshed",
+        description: response.syncedVideos ? `${response.syncedVideos} videos refreshed from YouTube.` : "Channel sync completed.",
       });
+      await loadTvPage();
     } catch (error) {
       toast({
-        title: "Unable to sync channel",
+        title: "Unable to refresh channel",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -212,18 +254,20 @@ export default function TVIntelligence() {
     }
   };
 
-  const queueVideoProcessing = async (videoId: string) => {
+  const transcribeVideo = async (videoId: string, retry = false) => {
     try {
-      setActionLoading(`process-${videoId}`);
-      await processTVYouTubeVideo(videoId);
-      setYoutubeVideos((current) => current.map((video) => (video.id === videoId ? { ...video, processing_status: "queued" } : video)));
+      setActionLoading(`${retry ? "retry" : "process"}-${videoId}`);
+      const response = retry ? await retryTVVideoProcessing(videoId) : await processTVYouTubeVideo(videoId);
       toast({
-        title: "Transcription queued",
-        description: "Gemini transcription will run in the background.",
+        title: retry ? "Transcription retried" : "Transcription complete",
+        description: response.item?.segmentCount
+          ? `${response.item.segmentCount} transcript segments saved.`
+          : "Video transcript updated.",
       });
+      await loadTvPage();
     } catch (error) {
       toast({
-        title: "Unable to queue transcription",
+        title: retry ? "Retry failed" : "Unable to transcribe video",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -232,18 +276,25 @@ export default function TVIntelligence() {
     }
   };
 
-  const queueRetry = async (videoId: string) => {
+  const runTranscriptSearch = async () => {
+    if (!transcriptSearch.trim()) {
+      setTranscriptResults([]);
+      return;
+    }
+
     try {
-      setActionLoading(`retry-${videoId}`);
-      await retryTVVideoProcessing(videoId);
-      setYoutubeVideos((current) => current.map((video) => (video.id === videoId ? { ...video, processing_status: "queued" } : video)));
-      toast({
-        title: "Retry queued",
-        description: "Failed processing will be retried in the background.",
-      });
+      setActionLoading("search-transcripts");
+      const response = await searchTVTranscripts(transcriptSearch.trim());
+      setTranscriptResults(response.items);
+      if (response.items.length === 0) {
+        toast({
+          title: "No transcript match found",
+          description: response.message || "Try a different phrase.",
+        });
+      }
     } catch (error) {
       toast({
-        title: "Unable to retry processing",
+        title: "Unable to search transcripts",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -268,14 +319,15 @@ export default function TVIntelligence() {
     }
   };
 
-  const queueTikTokSync = async (accountId: string) => {
+  const syncTikTok = async (accountId: string) => {
     try {
       setActionLoading(`tiktok-sync-${accountId}`);
       await syncTVTikTokAccount(accountId);
       toast({
-        title: "TikTok sync queued",
-        description: "TikTok videos will start syncing in the background worker.",
+        title: "TikTok sync started",
+        description: "Recent TikTok videos will be refreshed for this workspace.",
       });
+      await loadTvPage();
     } catch (error) {
       toast({
         title: "Unable to sync TikTok account",
@@ -287,164 +339,393 @@ export default function TVIntelligence() {
     }
   };
 
-  const filteredSegments = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return segments.filter((segment) => {
-      if (channelFilter !== "All" && segment.channel !== channelFilter) return false;
-      if (!query) return true;
-      return `${segment.channel} ${segment.show_name} ${segment.anchor_name || ""} ${segment.headline} ${segment.transcript_snippet || ""}`
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [channelFilter, search, segments]);
-
-  const coverageTrend = useMemo(() => {
-    const buckets = new Map<string, number>();
-    filteredSegments.forEach((segment) => {
-      const date = formatDay(segment.aired_at);
-      buckets.set(date, (buckets.get(date) || 0) + 1);
-    });
-    return Array.from(buckets.entries()).map(([date, count]) => ({ date, count })).slice(-7);
-  }, [filteredSegments]);
-
-  const channelCoverage = useMemo(() => {
-    const buckets = new Map<string, number>();
-    filteredSegments.forEach((segment) => {
-      buckets.set(segment.channel, (buckets.get(segment.channel) || 0) + 1);
-    });
-    return Array.from(buckets.entries())
-      .map(([channel, mentions]) => ({ channel, mentions }))
-      .sort((a, b) => b.mentions - a.mentions)
-      .slice(0, 8);
-  }, [filteredSegments]);
-
-  const positiveCount = filteredSegments.filter((segment) => segment.sentiment_label === "positive").length;
-  const neutralCount = filteredSegments.filter((segment) => !segment.sentiment_label || segment.sentiment_label === "neutral").length;
-  const negativeCount = filteredSegments.filter((segment) => segment.sentiment_label === "negative").length;
-
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Tv className="h-6 w-6 text-primary" />
-          TV Intelligence
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Live TV coverage and broadcast sentiment from your REST backend.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
+            <Tv className="h-6 w-6 text-primary" />
+            TV Intelligence
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Monitor connected YouTube channels, open videos on YouTube, run transcript generation, and search directly into spoken moments.
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => void loadTvPage({ withGlobalLoader: true })} disabled={loading}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
       </div>
 
       <PageVisualDeck
-        eyebrow="Broadcast Visuals"
-        title="Coverage rhythm, channel pressure, and sentiment"
-        description="TV dashboards now reflect live segments instead of demo cards."
+        eyebrow="Live Workspace Feed"
+        title="Channel sync, video coverage, and transcript health"
+        description="These cards now reflect real connected channels and transcript progress from your workspace."
         cards={[
-          { kind: "line", title: "Coverage Rhythm", value: String(filteredSegments.length), subtitle: "Visible segments", footer: "Current filtered feed", color: "#24c7d9", fill: "rgba(36, 199, 217, 0.16)", values: coverageTrend.map((item) => item.count) },
-          { kind: "bar", title: "Channel Pressure", value: String(channelCoverage[0]?.mentions || 0), subtitle: "Top channel count", footer: channelCoverage[0]?.channel || "No channel data", color: "#8b5cf6", values: channelCoverage.map((item) => item.mentions) },
-          { kind: "radial", title: "Tone Health", value: `${positiveCount}/${neutralCount}/${negativeCount}`, subtitle: "P / N / Neg", footer: "Visible sentiment mix", color: "#f97360", progress: filteredSegments.length ? Math.round((positiveCount / filteredSegments.length) * 100) : 0 },
+          {
+            kind: "line",
+            title: "Synced Videos",
+            value: compactNumber(summary.videos),
+            subtitle: `${summary.channels} connected channel${summary.channels === 1 ? "" : "s"}`,
+            footer: summary.latestVideoPublishedAt ? `Latest video ${formatDay(summary.latestVideoPublishedAt)}` : "No recent video yet",
+            color: "#ff7a59",
+            fill: "rgba(255, 122, 89, 0.18)",
+            values: publishingTrend.map((item) => item.count),
+          },
+          {
+            kind: "bar",
+            title: "Transcript Segments",
+            value: compactNumber(summary.transcriptSegments),
+            subtitle: `${summary.completedVideos} videos transcribed`,
+            footer: summary.latestChannelSyncAt ? `Last channel sync ${formatDay(summary.latestChannelSyncAt)}` : "Sync your first channel",
+            color: "#0ea5e9",
+            values: processingBreakdown.map((item) => item.value),
+          },
+          {
+            kind: "radial",
+            title: "Processing Health",
+            value: `${summary.completedVideos}/${summary.videos}`,
+            subtitle: "Completed vs total",
+            footer: summary.failedVideos > 0 ? `${summary.failedVideos} videos need attention` : "No failed transcripts right now",
+            color: "#22c55e",
+            progress: summary.videos ? Math.round((summary.completedVideos / summary.videos) * 100) : 0,
+          },
         ]}
       />
 
-      <div className="glass-premium rounded-2xl p-5 space-y-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search channels, anchors, shows, or headlines" className="pl-10" />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {["All", ...monitoredChannels].map((channel) => (
-            <button
-              key={channel}
-              onClick={() => setChannelFilter(channel)}
-              className={`rounded-full px-3 py-2 text-xs transition-colors ${channelFilter === channel ? "bg-primary/15 text-primary border border-primary/20" : "border border-border/50 text-muted-foreground"}`}
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className="glass-premium rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Youtube className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold text-foreground">YouTube Sources</h2>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-[1.2fr_auto]">
+            <Input
+              value={youtubeChannelId}
+              onChange={(event) => setYoutubeChannelId(event.target.value)}
+              placeholder="Add YouTube channel ID, @handle, or URL"
+              disabled={integrationStatus.youtubeConfigured === false}
+            />
+            <Button
+              onClick={() => void addYouTubeChannel()}
+              disabled={integrationStatus.youtubeConfigured === false || !youtubeChannelId.trim() || actionLoading === "add-channel"}
             >
-              {channel}
-            </button>
-          ))}
-        </div>
-      </div>
+              Connect Channel
+            </Button>
+          </div>
 
-      <MediaIntelligencePanel defaultSource="tv" />
+          {integrationStatus.youtubeConfigured === false ? (
+            <p className="text-xs text-muted-foreground">
+              Add `YOUTUBE_API_KEY` in Vercel Project Settings -&gt; Environment Variables, then redeploy to enable channel sync.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Paste a channel ID, `@handle`, or full YouTube channel URL. The app imports recent videos immediately so the TV page is ready right away.
+            </p>
+          )}
 
-      <div className="glass-premium rounded-2xl p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <Youtube className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">YouTube TV Transcripts</h2>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[1.2fr_auto]">
-          <Input
-            value={youtubeChannelId}
-            onChange={(event) => setYoutubeChannelId(event.target.value)}
-            placeholder="Add YouTube channel ID, @handle, or URL"
-            disabled={integrationStatus.youtubeConfigured === false}
-          />
-          <Button
-            onClick={() => void addYouTubeChannel()}
-            disabled={integrationStatus.youtubeConfigured === false || !youtubeChannelId.trim() || actionLoading === "add-channel"}
-          >
-            Connect Channel
-          </Button>
-        </div>
-        {integrationStatus.youtubeConfigured === false && (
-          <p className="text-xs text-muted-foreground">
-            Add `YOUTUBE_API_KEY` in Vercel Project Settings -&gt; Environment Variables, then redeploy to enable channel connection.
-          </p>
-        )}
-        {integrationStatus.youtubeConfigured !== false && (
-          <p className="text-xs text-muted-foreground">
-            Paste a YouTube channel ID like `UC...`, a handle like `@GoogleDevelopers`, or a full channel URL.
-          </p>
-        )}
-
-        <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">Connected Channels</h3>
+          <div className="grid gap-3 md:grid-cols-2">
             {youtubeChannels.length > 0 ? (
               youtubeChannels.map((channel) => (
-                <div key={channel.id} className="rounded-xl border border-border/40 bg-muted/20 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">{channel.channel_name}</p>
-                      <p className="text-xs text-muted-foreground">{channel.youtube_channel_id}</p>
+                <div key={channel.id} className="rounded-2xl border border-border/40 bg-background/40 p-4 space-y-4">
+                  <div className="flex items-start gap-3">
+                    {channel.thumbnail_url ? (
+                      <img src={channel.thumbnail_url} alt={channel.channel_name} className="h-12 w-12 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Youtube className="h-5 w-5" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-foreground">{channel.channel_name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{channel.youtube_channel_id}</p>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-muted/30 p-3">
+                      <p className="text-lg font-semibold text-foreground">{compactNumber(channel.video_count)}</p>
+                      <p className="text-[11px] text-muted-foreground">Videos</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/30 p-3">
+                      <p className="text-lg font-semibold text-foreground">{compactNumber(channel.transcribed_video_count)}</p>
+                      <p className="text-[11px] text-muted-foreground">Transcribed</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/30 p-3">
+                      <p className="text-sm font-semibold text-foreground">{formatDay(channel.latest_video_published_at)}</p>
+                      <p className="text-[11px] text-muted-foreground">Latest</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => void queueChannelSync(channel.id)}
-                      disabled={integrationStatus.youtubeConfigured === false || actionLoading === `sync-${channel.id}`}
+                      onClick={() => void refreshChannel(channel.id)}
+                      disabled={actionLoading === `sync-${channel.id}`}
                     >
-                      Sync
+                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                      Refresh Videos
                     </Button>
+                    {channel.channel_url ? (
+                      <a href={channel.channel_url} target="_blank" rel="noreferrer">
+                        <Button variant="outline" size="sm">
+                          Open Channel
+                        </Button>
+                      </a>
+                    ) : null}
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">Last synced: {formatDateTime(channel.last_synced_at)}</p>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground">
+                Connect your first YouTube channel to populate the TV workspace with real videos and transcript-ready records.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="glass-premium rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold text-foreground">Processing Snapshot</h2>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-background/40 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Completed</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{compactNumber(summary.completedVideos)}</p>
+            </div>
+            <div className="rounded-2xl bg-background/40 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Failed</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{compactNumber(summary.failedVideos)}</p>
+            </div>
+            <div className="rounded-2xl bg-background/40 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Queued</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{compactNumber(summary.queuedVideos)}</p>
+            </div>
+            <div className="rounded-2xl bg-background/40 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Running</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{compactNumber(summary.processingVideos)}</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/40 bg-background/30 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Recent Upload Trend</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={publishingTrend}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} strokeDasharray="4 6" />
+                <XAxis dataKey="date" tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} />
+                <YAxis tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#ff7a59" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-premium rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Recent YouTube Videos</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Review synced videos, open them on YouTube, and run transcript generation from the workspace.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={videoSearch}
+              onChange={(event) => setVideoSearch(event.target.value)}
+              placeholder="Search videos by title or YouTube ID"
+              className="pl-10"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {channelOptions.map((channel) => (
+              <button
+                key={channel}
+                onClick={() => setChannelFilter(channel)}
+                className={`rounded-full border px-3 py-2 text-xs transition-colors ${
+                  channelFilter === channel
+                    ? "border-primary/20 bg-primary/15 text-primary"
+                    : "border-border/50 text-muted-foreground"
+                }`}
+              >
+                {channel}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          {youtubeVideos.length > 0 ? (
+            youtubeVideos.map((video) => (
+              <div key={video.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-4">
+                <div className="flex gap-4">
+                  <a href={video.youtube_url} target="_blank" rel="noreferrer" className="shrink-0">
+                    {video.thumbnail_url ? (
+                      <img src={video.thumbnail_url} alt={video.title} className="h-28 w-44 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-28 w-44 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Video className="h-6 w-6" />
+                      </div>
+                    )}
+                  </a>
+
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusTone(video.processing_status)}`}>
+                        {video.processing_status}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{video.transcript_segment_count || 0} transcript segments</span>
+                    </div>
+
+                    <div>
+                      <p className="line-clamp-2 text-base font-semibold text-foreground">{video.title}</p>
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDay(video.published_at)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          {formatDuration(video.duration_seconds)}
+                        </span>
+                        <span>{video.tv_youtube_channels?.channel_name || "Unknown channel"}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-sm text-muted-foreground">
+                      {video.transcript_preview ||
+                        (video.processing_status === "failed"
+                          ? video.latest_job_error || "Transcript generation failed for this video."
+                          : video.processing_status === "completed"
+                            ? "Transcript completed, but no preview text is available yet."
+                            : "Transcript has not been generated for this video yet.")}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2">
+                      <a href={video.youtube_url} target="_blank" rel="noreferrer">
+                        <Button variant="outline" size="sm">
+                          Open on YouTube
+                          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                        </Button>
+                      </a>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void transcribeVideo(video.id)}
+                        disabled={integrationStatus.geminiConfigured === false || actionLoading === `process-${video.id}`}
+                      >
+                        Generate Transcript
+                      </Button>
+                      {video.processing_status === "failed" ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void transcribeVideo(video.id, true)}
+                          disabled={integrationStatus.geminiConfigured === false || actionLoading === `retry-${video.id}`}
+                        >
+                          Retry
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground xl:col-span-2">
+              No synced YouTube videos match your current filters yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <div className="glass-premium rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Search className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold text-foreground">Transcript Search</h2>
+          </div>
+          <div className="flex gap-3">
+            <Input
+              value={transcriptSearch}
+              onChange={(event) => setTranscriptSearch(event.target.value)}
+              placeholder="Search any word or phrase from available transcripts"
+            />
+            <Button variant="outline" onClick={() => void runTranscriptSearch()} disabled={actionLoading === "search-transcripts"}>
+              Search
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            {transcriptResults.length > 0 ? (
+              transcriptResults.map((result) => (
+                <div key={result.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-foreground">{result.videoTitle}</p>
+                  <p className="text-sm text-muted-foreground">{result.matchText}</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-primary">Jump to {Math.floor(result.startSec)}s</span>
+                    <a href={result.youtubeRedirectUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                      Open clip
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
                   </div>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No YouTube channels connected yet.</p>
+              <p className="text-sm text-muted-foreground">
+                Search transcript segments to jump straight into the matching YouTube moment.
+              </p>
             )}
+          </div>
+        </div>
+
+        <div className="glass-premium rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold text-foreground">Latest Transcript Wins</h2>
           </div>
 
           <div className="space-y-3">
-            <div className="flex gap-3">
-              <Input
-                value={transcriptSearch}
-                onChange={(event) => setTranscriptSearch(event.target.value)}
-                placeholder="Search any word or phrase from transcripts"
-              />
-              <Button variant="outline" onClick={() => void runTranscriptSearch()}>
-                Search
-              </Button>
-            </div>
-            {transcriptResults.length > 0 ? (
-              transcriptResults.map((result) => (
-                <div key={result.id} className="rounded-xl border border-border/40 bg-muted/20 p-4">
-                  <p className="text-sm font-semibold text-foreground">{result.videoTitle}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{result.matchText}</p>
-                  <p className="mt-2 text-xs text-primary">Timestamp: {Math.floor(result.startSec)}s</p>
-                  <a href={result.youtubeRedirectUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                    Open on YouTube <ExternalLink className="h-3 w-3" />
+            {recentTranscripts.length > 0 ? (
+              recentTranscripts.map((item) => (
+                <div key={item.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-3">
+                  <div className="flex gap-3">
+                    {item.thumbnail_url ? (
+                      <img src={item.thumbnail_url} alt={item.title} className="h-20 w-28 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-20 w-28 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Video className="h-5 w-5" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="line-clamp-2 text-sm font-semibold text-foreground">{item.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {item.channel_name} • {formatDay(item.published_at)}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{item.transcript_preview || "Transcript preview is not available yet."}</p>
+                  <a href={item.youtube_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                    Open on YouTube
+                    <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">Search transcript segments to jump directly into a video moment.</p>
+              <p className="text-sm text-muted-foreground">
+                Once transcripts are generated, the freshest transcript previews will appear here.
+              </p>
             )}
           </div>
         </div>
@@ -453,35 +734,38 @@ export default function TVIntelligence() {
       <div className="glass-premium rounded-2xl p-5 space-y-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">TikTok Video Feed</h2>
-            <p className="text-sm text-muted-foreground mt-1">Connect a TikTok creator account with TikTok Login + Display API, then sync recent public videos into this workspace.</p>
+            <h2 className="text-lg font-semibold text-foreground">TikTok Feed</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Connect a TikTok creator account to bring recent public TikTok content into the same media workspace.
+            </p>
           </div>
           <Button onClick={() => void connectTikTok()} disabled={integrationStatus.tiktokConfigured === false || actionLoading === "tiktok-connect"}>
             Connect TikTok
           </Button>
         </div>
-        {integrationStatus.tiktokConfigured === false && (
+
+        {integrationStatus.tiktokConfigured === false ? (
           <p className="text-xs text-muted-foreground">
             Add `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`, and `CLIENT_URL` in Vercel, then redeploy to enable TikTok connection.
           </p>
-        )}
+        ) : null}
 
         <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Connected TikTok Accounts</h3>
             {tiktokAccounts.length > 0 ? (
               tiktokAccounts.map((account) => (
-                <div key={account.id} className="rounded-xl border border-border/40 bg-muted/20 p-4">
+                <div key={account.id} className="rounded-2xl border border-border/40 bg-background/30 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">{account.display_name}</p>
                       <p className="truncate text-xs text-muted-foreground">{account.profile_url || account.tiktok_open_id}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Last synced: {account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : "Never"}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Last synced: {formatDateTime(account.last_synced_at)}</p>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => void queueTikTokSync(account.id)}
+                      onClick={() => void syncTikTok(account.id)}
                       disabled={integrationStatus.tiktokConfigured === false || actionLoading === `tiktok-sync-${account.id}`}
                     >
                       Sync
@@ -490,39 +774,30 @@ export default function TVIntelligence() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">
-                No TikTok accounts connected yet. TikTok requires Login Kit, approved scopes, and an `https` redirect URI.
-              </p>
+              <p className="text-sm text-muted-foreground">No TikTok accounts connected yet.</p>
             )}
           </div>
 
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Recent TikTok Videos</h3>
             {tiktokVideos.length > 0 ? (
-              tiktokVideos.slice(0, 12).map((video) => (
-                <div key={video.id} className="rounded-xl border border-border/40 bg-muted/20 p-4 space-y-3">
+              tiktokVideos.map((video) => (
+                <div key={video.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">{video.title || video.video_description || "Untitled TikTok video"}</p>
                       <p className="text-xs text-muted-foreground">
-                        {video.tv_tiktok_accounts?.display_name || "TikTok creator"} - {formatDay(video.published_at)}
+                        {video.tv_tiktok_accounts?.display_name || "TikTok creator"} • {formatDay(video.published_at)}
                       </p>
                     </div>
                     <a href={video.share_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                      Open <ExternalLink className="h-3 w-3" />
+                      Open
+                      <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                   </div>
-                  {video.embed_html ? (
-                    <div className="overflow-hidden rounded-xl border border-border/40 bg-background/40 p-2" dangerouslySetInnerHTML={{ __html: video.embed_html }} />
-                  ) : video.cover_image_url ? (
-                    <img src={video.cover_image_url} alt={video.title || "TikTok video"} className="h-48 w-full rounded-xl object-cover" />
+                  {video.cover_image_url ? (
+                    <img src={video.cover_image_url} alt={video.title || "TikTok video"} className="h-44 w-full rounded-xl object-cover" />
                   ) : null}
-                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span>{video.view_count || 0} views</span>
-                    <span>{video.like_count || 0} likes</span>
-                    <span>{video.comment_count || 0} comments</span>
-                    <span>{video.share_count || 0} shares</span>
-                  </div>
                 </div>
               ))
             ) : (
@@ -532,104 +807,7 @@ export default function TVIntelligence() {
         </div>
       </div>
 
-      <div className="glass-premium rounded-2xl p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-foreground">YouTube Video Processing</h3>
-        {integrationStatus.geminiConfigured === false && (
-          <p className="text-xs text-muted-foreground">
-            Add `GEMINI_API_KEY` in Vercel to enable transcript processing and retries.
-          </p>
-        )}
-        {youtubeVideos.length > 0 ? (
-          youtubeVideos.slice(0, 12).map((video) => (
-            <div key={video.id} className="flex flex-col gap-3 rounded-xl border border-border/40 bg-muted/20 p-4 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-foreground">{video.title}</p>
-                <p className="text-xs text-muted-foreground">
-                  {video.tv_youtube_channels?.channel_name || "Unknown channel"} - {video.processing_status}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void queueVideoProcessing(video.id)}
-                  disabled={integrationStatus.geminiConfigured === false || actionLoading === `process-${video.id}`}
-                >
-                  Process
-                </Button>
-                {video.processing_status === "failed" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void queueRetry(video.id)}
-                    disabled={integrationStatus.geminiConfigured === false || actionLoading === `retry-${video.id}`}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Retry
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="text-sm text-muted-foreground">Synced YouTube videos will appear here after channel sync runs.</p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="glass-premium rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">TV Coverage by Day</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={coverageTrend}>
-              <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} strokeDasharray="4 6" />
-              <XAxis dataKey="date" tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} />
-              <Tooltip />
-              <Line type="monotone" dataKey="count" stroke="#24c7d9" strokeWidth={3} dot={{ r: 4 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="glass-premium rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Top Channels</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={channelCoverage}>
-              <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} strokeDasharray="4 6" />
-              <XAxis dataKey="channel" tickLine={false} axisLine={false} stroke="#64748b" fontSize={10} />
-              <YAxis tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} />
-              <Tooltip />
-              <Bar dataKey="mentions" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {loading && <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading TV segments...</div>}
-        {!loading && filteredSegments.length === 0 && (
-          <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground space-y-2">
-            <p>No TV segments match the current filters.</p>
-            <p>
-              TV data is workspace-scoped. The page only shows rows that belong to your logged-in organization
-              {user?.company ? ` (${user.company})` : ""}.
-            </p>
-            <p>If you inserted rows manually, make sure their `organization_id` matches your current workspace.</p>
-          </div>
-        )}
-        {filteredSegments.map((segment) => (
-          <div key={segment.id} className="glass-premium rounded-2xl p-5 space-y-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold text-primary">{segment.channel}</span>
-              <span className="text-xs text-muted-foreground">{segment.show_name}</span>
-              {segment.anchor_name && <span className="text-xs text-muted-foreground flex items-center gap-1"><Mic className="h-3 w-3" /> {segment.anchor_name}</span>}
-              <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDay(segment.aired_at)}</span>
-              {segment.sentiment_label && <SentimentBadge sentiment={segment.sentiment_label} score={segment.sentiment_score} />}
-            </div>
-            <h3 className="text-lg font-semibold text-foreground">{segment.headline}</h3>
-            <p className="text-sm text-muted-foreground">{segment.transcript_snippet || "No transcript snippet was stored for this segment."}</p>
-          </div>
-        ))}
-      </div>
+      {loading ? <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading TV workspace…</div> : null}
     </div>
   );
 }

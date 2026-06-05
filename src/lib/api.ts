@@ -343,6 +343,9 @@ export interface TVYouTubeChannelRecord {
   status: string;
   last_synced_at?: string;
   created_at: string;
+  video_count?: number;
+  transcribed_video_count?: number;
+  latest_video_published_at?: string;
 }
 
 export interface TVYouTubeVideoRecord {
@@ -360,11 +363,39 @@ export interface TVYouTubeVideoRecord {
   transcript_text?: string;
   transcript_language?: string;
   last_processed_at?: string;
+  transcript_segment_count?: number;
+  transcript_preview?: string;
+  latest_job_status?: string;
+  latest_job_error?: string;
   tv_youtube_channels?: {
     id: string;
     channel_name: string;
     thumbnail_url?: string;
   };
+}
+
+export interface TVDashboardSummary {
+  channels: number;
+  videos: number;
+  transcriptSegments: number;
+  completedVideos: number;
+  processingVideos: number;
+  queuedVideos: number;
+  failedVideos: number;
+  pendingVideos: number;
+  latestVideoPublishedAt?: string | null;
+  latestChannelSyncAt?: string | null;
+}
+
+export interface TVRecentTranscriptRecord {
+  id: string;
+  title: string;
+  youtube_url: string;
+  thumbnail_url?: string | null;
+  published_at: string;
+  processing_status: string;
+  transcript_preview?: string | null;
+  channel_name: string;
 }
 
 export interface TVTikTokAccountRecord {
@@ -1024,6 +1055,9 @@ function mapTVYouTubeChannelRecord(item: DbRecord): TVYouTubeChannelRecord {
     status: asString(item.status),
     last_synced_at: asOptionalString(item.last_synced_at),
     created_at: asString(item.created_at),
+    video_count: typeof item.video_count === "number" ? item.video_count : undefined,
+    transcribed_video_count: typeof item.transcribed_video_count === "number" ? item.transcribed_video_count : undefined,
+    latest_video_published_at: asOptionalString(item.latest_video_published_at),
   };
 }
 
@@ -1044,6 +1078,10 @@ function mapTVYouTubeVideoRecord(item: DbRecord): TVYouTubeVideoRecord {
     transcript_text: asOptionalString(item.transcript_text),
     transcript_language: asOptionalString(item.transcript_language),
     last_processed_at: asOptionalString(item.last_processed_at),
+    transcript_segment_count: typeof item.transcript_segment_count === "number" ? item.transcript_segment_count : undefined,
+    transcript_preview: asOptionalString(item.transcript_preview),
+    latest_job_status: asOptionalString(item.latest_job_status),
+    latest_job_error: asOptionalString(item.latest_job_error),
     tv_youtube_channels: channel
       ? {
           id: asString(channel.id),
@@ -1725,15 +1763,22 @@ export async function getTVIntegrationStatus() {
   }>("/tv/status");
 }
 
+export async function getTVDashboard() {
+  return request<{
+    summary: TVDashboardSummary;
+    recentTranscripts: TVRecentTranscriptRecord[];
+  }>("/tv/dashboard");
+}
+
 export async function createTVYouTubeChannel(youtubeChannelId: string) {
-  return request<{ item: TVYouTubeChannelRecord; queued: boolean }>("/tv/channels", {
+  return request<{ item: TVYouTubeChannelRecord; syncSummary?: { syncedVideos: number } }>("/tv/channels", {
     method: "POST",
     body: JSON.stringify({ youtubeChannelId }),
   });
 }
 
 export async function syncTVYouTubeChannel(channelId: string) {
-  return request<{ queued: boolean }>(`/tv/channels/${channelId}/sync`, {
+  return request<{ queued: boolean; syncedVideos?: number }>(`/tv/channels/${channelId}/sync`, {
     method: "POST",
   });
 }
@@ -1756,7 +1801,7 @@ export async function getTVYouTubeVideos(params?: {
 }
 
 export async function processTVYouTubeVideo(videoId: string) {
-  return request<{ queued: boolean }>(`/tv/videos/${videoId}/process`, {
+  return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/process`, {
     method: "POST",
   });
 }
@@ -1768,7 +1813,7 @@ export async function generateTVVideoSrt(videoId: string) {
 }
 
 export async function retryTVVideoProcessing(videoId: string) {
-  return request<{ queued: boolean }>(`/tv/videos/${videoId}/retry`, {
+  return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/retry`, {
     method: "POST",
   });
 }

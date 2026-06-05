@@ -2,16 +2,15 @@ import express from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler, created, ok } from "../utils/http.js";
 import { parsePagination } from "../utils/query.js";
-import { supabaseAdmin } from "../supabase.js";
-import { config } from "../config.js";
 import {
   createTvChannel,
+  getTvDashboard,
   getTvProcessingLogs,
   listTvChannels,
   listTvVideos,
   processVideoTranscription,
-  queueTvJob,
   searchTranscriptSegments,
+  syncChannelVideos,
 } from "../modules/tv/service.js";
 
 const router = express.Router();
@@ -27,6 +26,14 @@ router.get(
         tiktokConfigured: Boolean(config.tiktokClientKey && config.tiktokClientSecret && config.tiktokRedirectUri),
       },
     });
+  }),
+);
+
+router.get(
+  "/dashboard",
+  asyncHandler(async (req, res) => {
+    const dashboard = await getTvDashboard({ organizationId: req.auth.organizationId });
+    return ok(res, dashboard);
   }),
 );
 
@@ -76,31 +83,34 @@ router.post(
       createdBy: req.auth.userId,
       youtubeChannelId,
     });
-
-    await queueTvJob({
+    const syncResult = await syncChannelVideos({
       organizationId: req.auth.organizationId,
       channelId: item.id,
-      jobType: "channel_sync",
-      provider: "youtube",
-      payload: { youtubeChannelId },
+      maxVideos: Math.min(50, Math.max(10, Number(req.body.maxVideos || 30))),
     });
 
-    return created(res, { item, queued: true });
+    return created(res, {
+      item,
+      syncSummary: {
+        syncedVideos: syncResult.videos.length,
+      },
+    });
   }),
 );
 
 router.post(
   "/channels/:id/sync",
   asyncHandler(async (req, res) => {
-    const job = await queueTvJob({
+    const syncResult = await syncChannelVideos({
       organizationId: req.auth.organizationId,
       channelId: req.params.id,
-      jobType: "channel_sync",
-      provider: "youtube",
-      payload: { channelId: req.params.id },
+      maxVideos: Math.min(100, Math.max(10, Number(req.body.maxVideos || req.query.maxVideos || 40))),
     });
 
-    return created(res, { queued: true, job });
+    return created(res, {
+      queued: false,
+      syncedVideos: syncResult.videos.length,
+    });
   }),
 );
 
@@ -131,21 +141,13 @@ router.get(
 router.post(
   "/videos/:id/process",
   asyncHandler(async (req, res) => {
-    const job = await queueTvJob({
+    const result = await processVideoTranscription({
       organizationId: req.auth.organizationId,
       videoId: req.params.id,
-      jobType: "video_transcription",
-      provider: "gemini",
-      payload: { videoId: req.params.id },
+      generateSrt: true,
     });
 
-    await supabaseAdmin
-      .from("tv_youtube_videos")
-      .update({ processing_status: "queued" })
-      .eq("organization_id", req.auth.organizationId)
-      .eq("id", req.params.id);
-
-    return created(res, { queued: true, job });
+    return created(res, { queued: false, item: result });
   }),
 );
 
@@ -163,36 +165,20 @@ router.post(
 router.post(
   "/videos/:id/generate-srt",
   asyncHandler(async (req, res) => {
-    const job = await queueTvJob({
-      organizationId: req.auth.organizationId,
-      videoId: req.params.id,
-      jobType: "srt_generation",
-      provider: "supabase-storage",
-      payload: { videoId: req.params.id },
-    });
-
-    return created(res, { queued: true, job });
+    return created(res, { queued: false, message: "SRT files are generated automatically after transcription." });
   }),
 );
 
 router.post(
   "/videos/:id/retry",
   asyncHandler(async (req, res) => {
-    const job = await queueTvJob({
+    const result = await processVideoTranscription({
       organizationId: req.auth.organizationId,
       videoId: req.params.id,
-      jobType: "retry_failed",
-      provider: "gemini",
-      payload: { videoId: req.params.id },
+      generateSrt: true,
     });
 
-    await supabaseAdmin
-      .from("tv_youtube_videos")
-      .update({ processing_status: "queued" })
-      .eq("organization_id", req.auth.organizationId)
-      .eq("id", req.params.id);
-
-    return created(res, { queued: true, job });
+    return created(res, { queued: false, item: result });
   }),
 );
 
