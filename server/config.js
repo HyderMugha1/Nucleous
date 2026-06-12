@@ -9,7 +9,9 @@ function normalizeUrl(rawUrl) {
   if (!rawUrl) return "";
 
   try {
-    const url = new URL(String(rawUrl).trim());
+    const candidate = String(rawUrl).trim();
+    const withScheme = /^[a-z]+:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+    const url = new URL(withScheme);
     return url.toString().replace(/\/$/, "");
   } catch {
     return String(rawUrl).trim();
@@ -41,6 +43,8 @@ const rawSiteUrl =
   process.env.PUBLIC_SITE_URL ||
   process.env.SITE_URL ||
   process.env.APP_URL ||
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+  process.env.VERCEL_URL ||
   process.env.CLIENT_URL ||
   "";
 const siteUrl = normalizeUrl(rawSiteUrl);
