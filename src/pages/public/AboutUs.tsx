@@ -2,6 +2,7 @@ export default function AboutUs() {
   return (
     <div className="space-y-8 animate-fade-in">
       <section className="rounded-[2rem] border border-primary/15 gradient-hero px-6 py-10 md:px-10">
+        <img src="/logo-mark.svg" alt="Nucleus" className="h-14 w-14 rounded-2xl shadow-[0_16px_36px_-20px_rgba(15,23,42,0.55)]" />
         <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">About Nucleus</p>
         <h1 className="mt-4 text-4xl font-bold premium-heading md:text-5xl">
           We turn fragmented public conversations into structured strategic awareness.

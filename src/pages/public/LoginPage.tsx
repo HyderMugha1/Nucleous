@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { LockKeyhole, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -69,9 +69,7 @@ export default function LoginPage() {
     <div className="flex min-h-[78vh] items-center justify-center py-6 animate-fade-in">
       <div className="grid w-full max-w-6xl gap-5 lg:grid-cols-[0.95fr_1.05fr]">
         <div className="rounded-[2rem] border border-primary/15 gradient-hero p-8">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl gradient-primary">
-            <LockKeyhole className="h-6 w-6 text-primary-foreground" />
-          </div>
+          <img src="/logo-mark.svg" alt="Nucleus" className="h-14 w-14 rounded-2xl shadow-[0_16px_36px_-20px_rgba(15,23,42,0.55)]" />
           <h1 className="mt-6 text-4xl font-bold premium-heading">Login to unlock the protected intelligence workspace.</h1>
           <p className="mt-4 text-sm leading-7 text-soft">
             Public pages show the product clearly. Your authenticated workspace is where live dashboards, reports, and

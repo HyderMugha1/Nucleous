@@ -98,9 +98,7 @@ export function AppSidebar() {
       <SidebarHeader className="p-4">
         <div className="rounded-[1.3rem] border border-white/60 bg-white/45 p-3 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.3)]">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl gradient-primary glow-primary-sm">
-              <Zap className="h-4 w-4 text-primary-foreground" />
-            </div>
+            <img src="/logo-mark.svg" alt="Nucleus" className="h-9 w-9 rounded-xl shadow-[0_10px_28px_-18px_rgba(15,23,42,0.5)]" />
             {!collapsed && (
               <div>
                 <h1 className="text-sm font-extrabold tracking-[-0.04em] text-foreground">NUCLEUS</h1>

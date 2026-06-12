@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { LockKeyhole, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,9 +88,7 @@ export default function ResetPasswordPage() {
     <div className="flex min-h-[78vh] items-center justify-center py-6 animate-fade-in">
       <div className="grid w-full max-w-5xl gap-5 lg:grid-cols-[0.92fr_1.08fr]">
         <div className="rounded-[2rem] border border-primary/15 gradient-hero p-8">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl gradient-primary">
-            <LockKeyhole className="h-6 w-6 text-primary-foreground" />
-          </div>
+          <img src="/logo-mark.svg" alt="Nucleus" className="h-14 w-14 rounded-2xl shadow-[0_16px_36px_-20px_rgba(15,23,42,0.55)]" />
           <h1 className="mt-6 text-4xl font-bold premium-heading">Choose a new password for your workspace.</h1>
           <p className="mt-4 text-sm leading-7 text-soft">
             This updates your Supabase account password directly, so once it saves you can log in normally again.

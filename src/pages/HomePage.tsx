@@ -312,6 +312,7 @@ export default function HomePage() {
             <div className="relative z-10 w-full px-6 py-14 md:px-10 md:py-16">
               <div className="mx-auto flex max-w-4xl flex-col items-center text-center">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-black/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/85 backdrop-blur-sm">
+                  <img src="/logo-mark.svg" alt="Nucleus" className="h-5 w-5 rounded-lg" />
                   <span className="h-2 w-2 rounded-full bg-primary animate-pulse-soft" />
                   Before Login Experience
                 </div>

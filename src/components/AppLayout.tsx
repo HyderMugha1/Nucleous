@@ -101,9 +101,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-full gradient-primary text-xs font-bold text-primary-foreground glow-primary-sm">
-                N
-              </div>
+              <img src="/logo-mark.svg" alt="Nucleus" className="h-10 w-10 rounded-full shadow-[0_12px_28px_-18px_rgba(15,23,42,0.5)]" />
               <button
                 onClick={() => {
                   logout();
