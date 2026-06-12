@@ -1,4 +1,5 @@
 import { cleanText } from "./content.js";
+import { config } from "../../../config.js";
 
 const robotsCache = new Map();
 
@@ -62,7 +63,7 @@ export async function safeRequest(url, options) {
     retries = 3,
     timeoutMs = 30000,
     delayMs = 2000,
-    userAgent = "NucleusWebPaperCrawler/1.0 (+https://localhost)",
+    userAgent = `NucleusWebPaperCrawler/1.0 (+${config.siteUrl || "https://app.your-domain.example.com"})`,
     respectRobots = true,
     baseUrl,
   } = options;

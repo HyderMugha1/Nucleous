@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, LockKeyhole, Moon, Sun } from "lucide-react";
+import { ChevronDown, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -75,9 +75,7 @@ export function PublicLayout() {
       <header className="sticky top-0 z-20 border-b border-white/10 glass-strong scanline shadow-[0_12px_34px_-30px_rgba(15,23,42,0.55)] backdrop-blur-xl">
         <div className="flex h-16 w-full items-center justify-between px-4 md:px-6 lg:px-8">
           <Link to="/" className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl gradient-primary glow-primary-sm">
-              <LockKeyhole className="h-4 w-4 text-primary-foreground" />
-            </span>
+            <img src="/logo-mark.svg" alt="Nucleus" className="h-9 w-9 rounded-2xl shadow-[0_10px_28px_-18px_rgba(15,23,42,0.5)]" />
             <span>
               <span className="block font-display text-sm font-bold tracking-[0.28em] premium-heading">NUCLEUS</span>
               <span className="block text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70">Media Intelligence</span>
@@ -180,9 +178,7 @@ export function PublicLayout() {
       <footer className="relative z-10 border-t border-white/10 bg-background/50 backdrop-blur-xl">
         <div className="flex w-full flex-col gap-5 px-4 py-6 md:flex-row md:items-center md:justify-between md:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl gradient-primary glow-primary-sm">
-              <LockKeyhole className="h-4 w-4 text-primary-foreground" />
-            </span>
+            <img src="/logo-mark.svg" alt="Nucleus" className="h-9 w-9 rounded-2xl shadow-[0_10px_28px_-18px_rgba(15,23,42,0.5)]" />
             <div>
               <p className="font-display text-sm font-bold tracking-[0.24em] premium-heading">NUCLEUS</p>
               <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70">Media Intelligence</p>
@@ -195,6 +191,12 @@ export function PublicLayout() {
                 {link.label}
               </Link>
             ))}
+            <Link to="/privacy" className="hover:text-foreground transition-colors">
+              Privacy
+            </Link>
+            <Link to="/terms" className="hover:text-foreground transition-colors">
+              Terms
+            </Link>
           </div>
 
           <p className="text-xs text-muted-foreground/75">Protected insights unlock after secure signup or login.</p>

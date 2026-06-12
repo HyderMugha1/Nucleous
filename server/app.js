@@ -30,7 +30,10 @@ import diagnosticRoutes from "./routes/diagnostic.js";
 import tiktokRoutes from "./routes/tiktok.js";
 
 function buildAllowedOrigins() {
-  const configured = [config.clientUrl, "http://localhost:8080", "http://127.0.0.1:8080"].filter(Boolean);
+  const configured = [config.clientUrl].filter(Boolean);
+  if (!config.isProduction) {
+    configured.push("http://localhost:8080", "http://127.0.0.1:8080");
+  }
   const expanded = new Set(configured);
 
   for (const origin of configured) {
@@ -60,7 +63,8 @@ export function createApp() {
   app.use(
     cors({
       origin(origin, callback) {
-        if (!origin || allowedOrigins.has(origin) || localhostPattern.test(origin) || vercelAppPattern.test(origin)) {
+        const allowLocalhost = !config.isProduction && localhostPattern.test(origin || "");
+        if (!origin || allowedOrigins.has(origin) || allowLocalhost || vercelAppPattern.test(origin)) {
           callback(null, true);
           return;
         }

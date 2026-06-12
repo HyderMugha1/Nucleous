@@ -18,7 +18,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const code = String(req.query.code || "").trim();
     const state = String(req.query.state || "").trim();
-    const clientUrl = config.clientUrl || "http://localhost:8080";
+    const clientUrl = config.clientUrl;
 
     if (!code || !state) {
       return res.redirect(`${clientUrl}/tv?tiktok=error`);

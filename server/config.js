@@ -3,6 +3,50 @@ import dns from "node:dns/promises";
 const DEFAULT_SUPABASE_URL = "https://csuzochqnfkbmtgglvje.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXpvY2hxbmZrYm10Z2dsdmplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NjAwNTMsImV4cCI6MjA5MzAzNjA1M30.EOmBXe5oOQ98jOHSbM95PsxZTdQ0JKvAbDgtHuFFVfk";
+const LOCAL_CLIENT_URL = "http://localhost:8080";
+
+function normalizeUrl(rawUrl) {
+  if (!rawUrl) return "";
+
+  try {
+    const url = new URL(String(rawUrl).trim());
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return String(rawUrl).trim();
+  }
+}
+
+function isLocalhostUrl(rawUrl) {
+  if (!rawUrl) return false;
+
+  try {
+    const url = new URL(rawUrl);
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
+function isHttpsUrl(rawUrl) {
+  if (!rawUrl) return false;
+
+  try {
+    return new URL(rawUrl).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const rawSiteUrl =
+  process.env.PUBLIC_SITE_URL ||
+  process.env.SITE_URL ||
+  process.env.APP_URL ||
+  process.env.CLIENT_URL ||
+  "";
+const siteUrl = normalizeUrl(rawSiteUrl);
+const clientUrl = siteUrl || LOCAL_CLIENT_URL;
+const tiktokRedirectUri = normalizeUrl(process.env.TIKTOK_REDIRECT_URI || (siteUrl ? `${siteUrl}/api/tiktok/callback` : ""));
+const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
 
 export const config = {
   port: Number(process.env.PORT || 5000),
@@ -10,11 +54,13 @@ export const config = {
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   supabaseDbUrl: process.env.SUPABASE_DB_URL || "",
-  clientUrl: process.env.CLIENT_URL || "http://localhost:8080",
+  siteUrl,
+  clientUrl,
+  isProduction,
   youtubeApiKey: process.env.YOUTUBE_API_KEY || "",
   tiktokClientKey: process.env.TIKTOK_CLIENT_KEY || "",
   tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET || "",
-  tiktokRedirectUri: process.env.TIKTOK_REDIRECT_URI || "",
+  tiktokRedirectUri,
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-3-flash-preview",
   tvSrtBucket: process.env.SUPABASE_TV_SRT_BUCKET || "tv-subtitles",
@@ -51,9 +97,31 @@ export async function validateConfig() {
 
   if (!config.supabaseUrl) missing.push("SUPABASE_URL or VITE_SUPABASE_URL");
   if (!config.supabaseAnonKey) missing.push("SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY");
+  if (config.tiktokClientKey && !config.tiktokClientSecret) missing.push("TIKTOK_CLIENT_SECRET");
+  if (config.tiktokClientKey && !config.tiktokRedirectUri) missing.push("TIKTOK_REDIRECT_URI or PUBLIC_SITE_URL");
 
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+  }
+
+  if (config.tiktokRedirectUri) {
+    await validateResolvableHostname("TIKTOK_REDIRECT_URI", config.tiktokRedirectUri);
+  }
+
+  if (config.siteUrl) {
+    await validateResolvableHostname("PUBLIC_SITE_URL", config.siteUrl);
+  }
+
+  if (isProduction) {
+    if (!config.siteUrl) {
+      throw new Error("PUBLIC_SITE_URL (or SITE_URL / APP_URL) is required in production");
+    }
+    if (isLocalhostUrl(config.siteUrl) || !isHttpsUrl(config.siteUrl)) {
+      throw new Error("PUBLIC_SITE_URL must use HTTPS and cannot point to localhost in production");
+    }
+    if (config.tiktokRedirectUri && (isLocalhostUrl(config.tiktokRedirectUri) || !isHttpsUrl(config.tiktokRedirectUri))) {
+      throw new Error("TIKTOK_REDIRECT_URI must use HTTPS and cannot point to localhost in production");
+    }
   }
 
   await validateResolvableHostname("SUPABASE_URL", config.supabaseUrl);

@@ -1,0 +1,17 @@
+{
+  "name": "Nucleus",
+  "short_name": "Nucleus",
+  "description": "Media intelligence platform for narrative monitoring, reporting, and connected account workflows.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101826",
+  "theme_color": "#101826",
+  "icons": [
+    {
+      "src": "/logo-mark.svg",
+      "sizes": "256x256",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { submitContactInquiry } from "@/lib/api";
+import { siteConfig } from "@/lib/site";
 import { toast } from "@/hooks/use-toast";
 
 export default function ContactUs() {
@@ -100,10 +101,10 @@ export default function ContactUs() {
 
         <div className="space-y-4">
           <div className="chart-shell space-y-4 p-6">
-            <h2 className="text-lg font-semibold text-foreground">Contact Details</h2>
-            <p className="text-sm text-soft">Email: hello@nucleus.ai</p>
-            <p className="text-sm text-soft">Phone: +1 (555) 014-4471</p>
-            <p className="text-sm text-soft">Availability: Enterprise onboarding, implementation support, and guided demos.</p>
+            <h2 className="text-lg font-semibold text-foreground">Support Details</h2>
+            <p className="text-sm text-soft">Website: {siteConfig.siteUrl}</p>
+            <p className="text-sm text-soft">Support channel: public contact form at {siteConfig.contactUrl}</p>
+            <p className="text-sm text-soft">Availability: Enterprise onboarding, implementation support, compliance review, and guided demos.</p>
             <Button
               type="button"
               disabled={submitting}
@@ -121,6 +122,7 @@ export default function ContactUs() {
               <p>We help align your use case, onboarding fields, and workspace access model.</p>
               <p>Your team can review the platform publicly first, then move into protected dashboards after login.</p>
               <p>Signup details like company, contact number, and competitors can be used to tailor the post-login experience.</p>
+              <p>Public legal pages remain accessible without login at {siteConfig.privacyUrl} and {siteConfig.termsUrl}.</p>
             </div>
           </div>
         </div>
