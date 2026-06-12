@@ -1,5 +1,5 @@
 import { cleanText } from "./content.js";
-import { config } from "../../../config.js";
+import { config } from "../../../../config.js";
 
 const robotsCache = new Map();
 
