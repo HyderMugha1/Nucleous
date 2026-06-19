@@ -7,7 +7,7 @@ import {
   getTikTokConnectUrl,
   listTikTokAccounts,
   listTikTokVideos,
-  queueTikTokAccountSync,
+  syncTikTokAccountVideos,
 } from "../modules/tv/service.js";
 import { parsePagination } from "../utils/query.js";
 
@@ -25,7 +25,11 @@ router.get(
     }
 
     try {
-      await connectTikTokAccountFromCallback({ code, state });
+      const result = await connectTikTokAccountFromCallback({ code, state });
+      await syncTikTokAccountVideos({
+        organizationId: result.organizationId,
+        accountId: result.account.id,
+      });
       return res.redirect(`${clientUrl}/tv?tiktok=connected`);
     } catch {
       return res.redirect(`${clientUrl}/tv?tiktok=error`);
@@ -81,11 +85,11 @@ router.post(
   "/accounts/:id/sync",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const job = await queueTikTokAccountSync({
+    const result = await syncTikTokAccountVideos({
       organizationId: req.auth.organizationId,
       accountId: req.params.id,
     });
-    return created(res, { queued: true, job });
+    return created(res, { queued: false, syncedVideos: result.videos.length });
   }),
 );
 

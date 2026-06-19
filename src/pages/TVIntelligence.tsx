@@ -5,23 +5,32 @@ import {
   createTVYouTubeChannel,
   getTVDashboard,
   getTVIntegrationStatus,
+  getTVTikTokAccounts,
+  getTVTikTokConnectUrl,
+  getTVTikTokVideos,
   getTVYouTubeChannels,
   getTVYouTubeVideos,
   processTVYouTubeVideo,
   retryTVVideoProcessing,
   searchTVTranscripts,
+  syncTVTikTokAccount,
   syncTVYouTubeChannel,
   type TVDashboardSummary,
   type TVRecentTranscriptRecord,
+  type TVTikTokAccountRecord,
+  type TVTikTokVideoRecord,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
   type TVYouTubeVideoRecord,
 } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import {
+  AlertCircle,
   Calendar,
   Clock3,
   ExternalLink,
+  Music2,
+  PlayCircle,
   RefreshCw,
   Search,
   Sparkles,
@@ -30,6 +39,7 @@ import {
   Youtube,
 } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function formatDay(value?: string | null) {
@@ -94,14 +104,18 @@ export default function TVIntelligence() {
   const [integrationStatus, setIntegrationStatus] = useState<{
     youtubeConfigured: boolean | null;
     geminiConfigured: boolean | null;
+    tiktokConfigured: boolean | null;
   }>({
     youtubeConfigured: null,
     geminiConfigured: null,
+    tiktokConfigured: null,
   });
   const [summary, setSummary] = useState<TVDashboardSummary>(EMPTY_SUMMARY);
   const [recentTranscripts, setRecentTranscripts] = useState<TVRecentTranscriptRecord[]>([]);
   const [youtubeChannels, setYoutubeChannels] = useState<TVYouTubeChannelRecord[]>([]);
   const [youtubeVideos, setYoutubeVideos] = useState<TVYouTubeVideoRecord[]>([]);
+  const [tiktokAccounts, setTiktokAccounts] = useState<TVTikTokAccountRecord[]>([]);
+  const [tiktokVideos, setTiktokVideos] = useState<TVTikTokVideoRecord[]>([]);
   const [transcriptResults, setTranscriptResults] = useState<TVTranscriptSearchRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -109,6 +123,8 @@ export default function TVIntelligence() {
   const [videoSearch, setVideoSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<string>("All");
   const [transcriptSearch, setTranscriptSearch] = useState("");
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const deferredVideoSearch = useDeferredValue(videoSearch);
 
@@ -121,7 +137,7 @@ export default function TVIntelligence() {
     try {
       const selectedChannel = youtubeChannels.find((channel) => channel.channel_name === channelFilter);
 
-      const [statusResponse, dashboardResponse, channelsResponse, videosResponse] = await Promise.all([
+      const [statusResponse, dashboardResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse] = await Promise.all([
         getTVIntegrationStatus(),
         getTVDashboard(),
         getTVYouTubeChannels(),
@@ -130,16 +146,21 @@ export default function TVIntelligence() {
           search: deferredVideoSearch.trim() || undefined,
           channelId: selectedChannel?.id,
         }),
+        getTVTikTokAccounts(),
+        getTVTikTokVideos({ limit: 18 }),
       ]);
 
       setIntegrationStatus({
         youtubeConfigured: statusResponse.integrations.youtubeConfigured,
         geminiConfigured: statusResponse.integrations.geminiConfigured,
+        tiktokConfigured: statusResponse.integrations.tiktokConfigured,
       });
       setSummary(dashboardResponse.summary);
       setRecentTranscripts(dashboardResponse.recentTranscripts);
       setYoutubeChannels(channelsResponse.items);
       setYoutubeVideos(videosResponse.items);
+      setTiktokAccounts(tiktokAccountsResponse.items);
+      setTiktokVideos(tiktokVideosResponse.items);
     } catch (error) {
       toast({
         title: "Unable to load TV intelligence",
@@ -161,6 +182,30 @@ export default function TVIntelligence() {
     if (loading) return;
     void loadTvPage();
   }, [loadTvPage, loading]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(location.search);
+    const tiktokState = query.get("tiktok");
+    if (!tiktokState) return;
+
+    if (tiktokState === "connected") {
+      toast({
+        title: "TikTok account connected",
+        description: "Your TikTok account is now linked. Sync may take a moment to surface the latest videos.",
+      });
+      void loadTvPage();
+    } else if (tiktokState === "error") {
+      toast({
+        title: "TikTok connection failed",
+        description: "TikTok did not complete the account connection. Please try again.",
+        variant: "destructive",
+      });
+    }
+
+    query.delete("tiktok");
+    const nextSearch = query.toString();
+    navigate({ pathname: location.pathname, search: nextSearch ? `?${nextSearch}` : "" }, { replace: true });
+  }, [loadTvPage, location.pathname, location.search, navigate]);
 
   const channelOptions = useMemo(() => ["All", ...youtubeChannels.map((channel) => channel.channel_name)], [youtubeChannels]);
 
@@ -185,6 +230,52 @@ export default function TVIntelligence() {
     ],
     [summary],
   );
+
+  const tiktokStatsByAccount = useMemo(() => {
+    const counts = new Map<string, number>();
+    tiktokVideos.forEach((video) => {
+      counts.set(video.account_id, (counts.get(video.account_id) || 0) + 1);
+    });
+    return counts;
+  }, [tiktokVideos]);
+
+  const connectTikTok = async () => {
+    try {
+      setActionLoading("connect-tiktok");
+      const response = await getTVTikTokConnectUrl();
+      window.location.href = response.url;
+    } catch (error) {
+      toast({
+        title: "Unable to start TikTok connection",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const refreshTikTok = async (accountId: string) => {
+    try {
+      setActionLoading(`sync-tiktok-${accountId}`);
+      const response = await syncTVTikTokAccount(accountId);
+      toast({
+        title: "TikTok account refreshed",
+        description: response.syncedVideos
+          ? `${response.syncedVideos} TikTok videos refreshed successfully.`
+          : "TikTok account sync completed successfully.",
+      });
+      await loadTvPage();
+    } catch (error) {
+      toast({
+        title: "Unable to sync TikTok account",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const addYouTubeChannel = async () => {
     if (!youtubeChannelId.trim()) return;
@@ -290,10 +381,7 @@ export default function TVIntelligence() {
             TV Intelligence
           </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Monitor connected YouTube channels, open videos on YouTube, run transcript generation, and search directly into spoken moments.
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            TikTok is paused for now and will be re-enabled once your official TikTok API access is ready.
+            Monitor connected YouTube and TikTok sources, refresh video coverage, run transcript generation, and search directly into spoken moments.
           </p>
         </div>
         <Button variant="outline" onClick={() => void loadTvPage({ withGlobalLoader: true })} disabled={loading}>
@@ -476,6 +564,100 @@ export default function TVIntelligence() {
       <div className="glass-premium rounded-2xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
+            <div className="flex items-center gap-2">
+              <Music2 className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">TikTok Sources</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Connect creator accounts through TikTok OAuth, refresh synced videos, and open public TikTok posts directly from the workspace.
+            </p>
+          </div>
+          <Button
+            onClick={() => void connectTikTok()}
+            disabled={integrationStatus.tiktokConfigured === false || actionLoading === "connect-tiktok"}
+          >
+            Connect TikTok Account
+          </Button>
+        </div>
+
+        {integrationStatus.tiktokConfigured === false ? (
+          <div className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-4 text-sm text-amber-900">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                Add `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, and the exact production `TIKTOK_REDIRECT_URI` in Vercel Project Settings,
+                then redeploy to enable live TikTok account linking.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            This uses TikTok OAuth with the production callback at `https://nucleous-eta.vercel.app/api/tiktok/callback`.
+          </p>
+        )}
+
+        <div className="grid gap-3 md:grid-cols-2">
+          {tiktokAccounts.length > 0 ? (
+            tiktokAccounts.map((account) => (
+              <div key={account.id} className="rounded-2xl border border-border/40 bg-background/40 p-4 space-y-4">
+                <div className="flex items-start gap-3">
+                  {account.avatar_url ? (
+                    <img src={account.avatar_url} alt={account.display_name} className="h-12 w-12 rounded-xl object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <Music2 className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">{account.display_name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{account.username || account.tiktok_open_id}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="rounded-xl bg-muted/30 p-3">
+                    <p className="text-lg font-semibold text-foreground">{compactNumber(tiktokStatsByAccount.get(account.id) || 0)}</p>
+                    <p className="text-[11px] text-muted-foreground">Videos</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/30 p-3">
+                    <p className="text-sm font-semibold text-foreground">{formatDay(account.last_synced_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">Last Sync</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshTikTok(account.id)}
+                    disabled={actionLoading === `sync-tiktok-${account.id}`}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Refresh Videos
+                  </Button>
+                  {account.profile_url ? (
+                    <a href={account.profile_url} target="_blank" rel="noreferrer">
+                      <Button variant="outline" size="sm">
+                        Open Profile
+                      </Button>
+                    </a>
+                  ) : null}
+                </div>
+
+                <p className="text-xs text-muted-foreground">{account.bio_description || "Connected TikTok creator account."}</p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground md:col-span-2">
+              Connect your first TikTok account to surface recent posts, engagement metrics, and quick outbound links to the live videos.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-premium rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
             <h2 className="text-lg font-semibold text-foreground">Recent YouTube Videos</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Review synced videos, open them on YouTube, and run transcript generation from the workspace.
@@ -590,6 +772,98 @@ export default function TVIntelligence() {
           ) : (
             <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground xl:col-span-2">
               No synced YouTube videos match your current filters yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-premium rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Recent TikTok Videos</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Review synced TikTok posts, spot recent publishing activity, and jump directly to public post URLs.
+            </p>
+          </div>
+          <div className="rounded-full border border-border/50 px-3 py-2 text-xs text-muted-foreground">
+            {compactNumber(tiktokVideos.length)} videos loaded
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          {tiktokVideos.length > 0 ? (
+            tiktokVideos.map((video) => (
+              <div key={video.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-4">
+                <div className="flex gap-4">
+                  <a href={video.share_url} target="_blank" rel="noreferrer" className="shrink-0">
+                    {video.cover_image_url ? (
+                      <img src={video.cover_image_url} alt={video.title || "TikTok video"} className="h-28 w-28 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-28 w-28 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <PlayCircle className="h-6 w-6" />
+                      </div>
+                    )}
+                  </a>
+
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                        TikTok
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {video.tv_tiktok_accounts?.display_name || "Connected account"}
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="line-clamp-2 text-base font-semibold text-foreground">{video.title || "Untitled TikTok post"}</p>
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDay(video.published_at)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          {formatDuration(video.duration_seconds)}
+                        </span>
+                        <span>{compactNumber(video.view_count)} views</span>
+                      </div>
+                    </div>
+
+                    <p className="text-sm text-muted-foreground">
+                      {video.video_description || "No description is available for this TikTok post yet."}
+                    </p>
+
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-xl bg-muted/30 p-3">
+                        <p className="text-sm font-semibold text-foreground">{compactNumber(video.like_count)}</p>
+                        <p className="text-[11px] text-muted-foreground">Likes</p>
+                      </div>
+                      <div className="rounded-xl bg-muted/30 p-3">
+                        <p className="text-sm font-semibold text-foreground">{compactNumber(video.comment_count)}</p>
+                        <p className="text-[11px] text-muted-foreground">Comments</p>
+                      </div>
+                      <div className="rounded-xl bg-muted/30 p-3">
+                        <p className="text-sm font-semibold text-foreground">{compactNumber(video.share_count)}</p>
+                        <p className="text-[11px] text-muted-foreground">Shares</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <a href={video.share_url} target="_blank" rel="noreferrer">
+                        <Button variant="outline" size="sm">
+                          Open on TikTok
+                          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                        </Button>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground xl:col-span-2">
+              No synced TikTok videos are available yet. Connect an account above, then refresh after authorization completes.
             </div>
           )}
         </div>

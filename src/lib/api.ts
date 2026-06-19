@@ -1731,7 +1731,7 @@ export async function getTVTikTokAccounts() {
 }
 
 export async function syncTVTikTokAccount(accountId: string) {
-  return request<{ queued: boolean }>(`/tiktok/accounts/${accountId}/sync`, {
+  return request<{ queued: boolean; syncedVideos?: number }>(`/tiktok/accounts/${accountId}/sync`, {
     method: "POST",
   });
 }

@@ -222,13 +222,6 @@ export async function connectTikTokAccountFromCallback({ code, state }) {
     tokenData,
   });
 
-  await queueTvJob({
-    organizationId: parsedState.organizationId,
-    jobType: "tiktok_account_sync",
-    provider: "tiktok",
-    payload: { tiktokAccountId: account.id },
-  });
-
   return {
     account,
     organizationId: parsedState.organizationId,
