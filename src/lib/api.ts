@@ -1292,7 +1292,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || "Request failed");
+    const fallbackMessage = response.status
+      ? `Request failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""})`
+      : "Request failed";
+    throw new Error(data.message || fallbackMessage);
   }
 
   return data as T;

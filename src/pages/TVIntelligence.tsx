@@ -101,6 +101,10 @@ function normalizeLoadError(error: unknown) {
     return "TikTok database tables are not installed in Supabase yet. Apply the TikTok TV migrations, then refresh this page.";
   }
 
+  if (/504|gateway timeout|request timeout|service unavailable|function invocation failed/i.test(message)) {
+    return "The TV backend timed out while talking to Supabase. Your database or project services are currently unhealthy or still recovering. Wait a few minutes, then refresh this page.";
+  }
+
   return message;
 }
 

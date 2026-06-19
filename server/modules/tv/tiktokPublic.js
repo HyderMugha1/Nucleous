@@ -1,4 +1,3 @@
-import { load } from "cheerio";
 import { supabaseAdmin } from "../../supabase.js";
 import { config } from "../../config.js";
 import { safeRequest } from "../news/webPaperCrawler/utils/safeRequest.js";
@@ -88,26 +87,85 @@ async function fetchOEmbed(url) {
   return data;
 }
 
-function getMetaContent($, selectors) {
-  for (const selector of selectors) {
-    const value = $(selector).attr("content") || $(selector).attr("href");
-    if (value) return String(value).trim();
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function extractTagAttributes(attributesText) {
+  const attributes = {};
+  const pattern = /([:@\w-]+)\s*=\s*["']([^"']*)["']/g;
+  let match;
+  while ((match = pattern.exec(attributesText))) {
+    attributes[match[1].toLowerCase()] = decodeHtmlEntities(match[2]);
   }
+  return attributes;
+}
+
+function findMetaContent(html, selectors) {
+  const metaMatches = Array.from(html.matchAll(/<meta\b([^>]*?)>/gi));
+  const linkMatches = Array.from(html.matchAll(/<link\b([^>]*?)>/gi));
+
+  for (const selector of selectors) {
+    if (selector.startsWith("meta[")) {
+      const selectorMatch = /^meta\[(name|property)="([^"]+)"\]$/i.exec(selector);
+      if (!selectorMatch) continue;
+      const [, attrName, attrValue] = selectorMatch;
+
+      for (const match of metaMatches) {
+        const attrs = extractTagAttributes(match[1] || "");
+        if ((attrs[attrName.toLowerCase()] || "").toLowerCase() === attrValue.toLowerCase() && attrs.content) {
+          return attrs.content.trim();
+        }
+      }
+
+      continue;
+    }
+
+    if (selector === 'link[rel="canonical"]') {
+      for (const match of linkMatches) {
+        const attrs = extractTagAttributes(match[1] || "");
+        if ((attrs.rel || "").toLowerCase() === "canonical" && attrs.href) {
+          return attrs.href.trim();
+        }
+      }
+    }
+  }
+
   return null;
 }
 
-function findScriptJsonByIds(html) {
-  const patterns = [
-    /<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/i,
-    /<script[^>]*id="SIGI_STATE"[^>]*>([\s\S]*?)<\/script>/i,
-    /<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i,
-  ];
+function getPageTitle(html) {
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return match ? decodeHtmlEntities(match[1]).trim() : "";
+}
 
-  for (const pattern of patterns) {
-    const match = pattern.exec(html);
-    if (!match?.[1]) continue;
+function findScriptContentById(html, id) {
+  const pattern = new RegExp(`<script[^>]*id=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)<\\/script>`, "i");
+  const match = pattern.exec(html);
+  return match?.[1] || null;
+}
+
+function findFirstScriptContentByType(html, type) {
+  const pattern = new RegExp(`<script[^>]*type=["']${escapeRegExp(type)}["'][^>]*>([\\s\\S]*?)<\\/script>`, "i");
+  const match = pattern.exec(html);
+  return match?.[1] || null;
+}
+
+function findScriptJsonByIds(html) {
+  for (const id of ["__UNIVERSAL_DATA_FOR_REHYDRATION__", "SIGI_STATE", "__NEXT_DATA__"]) {
+    const content = findScriptContentById(html, id);
+    if (!content) continue;
     try {
-      return JSON.parse(match[1]);
+      return JSON.parse(content);
     } catch {
       // ignore parse failures and continue
     }
@@ -128,13 +186,12 @@ function collectVideoUrlsFromHtml(html) {
 }
 
 function extractProfileSnapshot(html, url) {
-  const $ = load(html);
   const pathname = new URL(url).pathname;
   const handle = pathname.split("/").find((segment) => segment.startsWith("@"))?.replace(/^@/, "") || null;
-  const title = getMetaContent($, ['meta[property="og:title"]', 'meta[name="twitter:title"]']) || handle;
-  const description = getMetaContent($, ['meta[property="og:description"]', 'meta[name="description"]', 'meta[name="twitter:description"]']);
-  const image = getMetaContent($, ['meta[property="og:image"]', 'meta[name="twitter:image"]']);
-  const canonical = getMetaContent($, ['link[rel="canonical"]']) || url;
+  const title = findMetaContent(html, ['meta[property="og:title"]', 'meta[name="twitter:title"]']) || handle;
+  const description = findMetaContent(html, ['meta[property="og:description"]', 'meta[name="description"]', 'meta[name="twitter:description"]']);
+  const image = findMetaContent(html, ['meta[property="og:image"]', 'meta[name="twitter:image"]']);
+  const canonical = findMetaContent(html, ['link[rel="canonical"]']) || url;
   const jsonBlob = findScriptJsonByIds(html);
   const jsonText = jsonBlob ? JSON.stringify(jsonBlob) : "";
   const videoUrls = collectVideoUrlsFromHtml(html + "\n" + jsonText);
@@ -147,7 +204,7 @@ function extractProfileSnapshot(html, url) {
     bioDescription: description,
     videoUrls,
     metadata: {
-      pageTitle: $("title").text().trim() || null,
+      pageTitle: getPageTitle(html) || null,
       canonical,
     },
   };
@@ -159,8 +216,7 @@ function extractVideoPostId(url) {
 }
 
 function extractPublishedAtFromVideoHtml(html) {
-  const $ = load(html);
-  const ldJson = $('script[type="application/ld+json"]').first().html();
+  const ldJson = findFirstScriptContentByType(html, "application/ld+json");
   if (ldJson) {
     try {
       const parsed = JSON.parse(ldJson);
@@ -170,7 +226,7 @@ function extractPublishedAtFromVideoHtml(html) {
     }
   }
 
-  const metaTime = getMetaContent($, ['meta[property="article:published_time"]']);
+  const metaTime = findMetaContent(html, ['meta[property="article:published_time"]']);
   if (metaTime) {
     return new Date(metaTime).toISOString();
   }
