@@ -451,6 +451,13 @@ export interface TVTikTokPublicSourceRecord {
   last_synced_at?: string;
   last_error_message?: string;
   post_count?: number;
+  discoverable_post_count?: number;
+  profile_stats?: {
+    follower_count?: number;
+    following_count?: number;
+    like_count?: number;
+    video_count?: number;
+  };
   created_at: string;
 }
 
@@ -1184,6 +1191,7 @@ function mapTVTikTokVideoRecord(item: DbRecord): TVTikTokVideoRecord {
 }
 
 function mapTVTikTokPublicSourceRecord(item: DbRecord): TVTikTokPublicSourceRecord {
+  const profileStats = asRecord(item.profile_stats);
   return {
     id: asString(item.id),
     source_type: (asString(item.source_type) || "profile") as TVTikTokPublicSourceRecord["source_type"],
@@ -1198,6 +1206,15 @@ function mapTVTikTokPublicSourceRecord(item: DbRecord): TVTikTokPublicSourceReco
     last_synced_at: asOptionalString(item.last_synced_at),
     last_error_message: asOptionalString(item.last_error_message),
     post_count: typeof item.post_count === "number" ? item.post_count : undefined,
+    discoverable_post_count: typeof item.discoverable_post_count === "number" ? item.discoverable_post_count : undefined,
+    profile_stats: profileStats
+      ? {
+          follower_count: typeof profileStats.follower_count === "number" ? profileStats.follower_count : undefined,
+          following_count: typeof profileStats.following_count === "number" ? profileStats.following_count : undefined,
+          like_count: typeof profileStats.like_count === "number" ? profileStats.like_count : undefined,
+          video_count: typeof profileStats.video_count === "number" ? profileStats.video_count : undefined,
+        }
+      : undefined,
     created_at: asString(item.created_at),
   };
 }

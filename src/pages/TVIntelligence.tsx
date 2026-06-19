@@ -822,53 +822,83 @@ export default function TVIntelligence() {
           {tiktokPublicSources.length > 0 ? (
             tiktokPublicSources.map((source) => (
               <div key={source.id} className="rounded-2xl border border-border/40 bg-background/40 p-4 space-y-4">
-                <div className="flex items-start gap-3">
-                  {source.avatar_url ? (
-                    <img src={source.avatar_url} alt={source.display_name || source.account_handle || "TikTok source"} className="h-12 w-12 rounded-xl object-cover" />
-                  ) : (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                      <Link2 className="h-5 w-5" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-foreground">{source.display_name || source.account_handle || "TikTok public source"}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {source.source_type === "profile" ? `@${source.account_handle || "profile"}` : "Public video URL"}
-                    </p>
-                  </div>
-                </div>
+                {(() => {
+                  const capturedPosts = publicPostsBySource.get(source.id) || source.discoverable_post_count || source.post_count || 0;
+                  const totalProfileVideos = source.profile_stats?.video_count;
+                  const followerCount = source.profile_stats?.follower_count;
+                  const likeCount = source.profile_stats?.like_count;
+                  const hasProfileStats = typeof totalProfileVideos === "number" || typeof followerCount === "number" || typeof likeCount === "number";
+                  const monitoringNote =
+                    source.source_type === "profile" && hasProfileStats && capturedPosts === 0
+                      ? "TikTok exposed the public profile stats, but not discoverable post URLs during this sync."
+                      : source.last_error_message || source.bio_description || "Public TikTok source monitored outside the official OAuth integration.";
 
-                <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="rounded-xl bg-muted/30 p-3">
-                    <p className="text-lg font-semibold text-foreground">{compactNumber(publicPostsBySource.get(source.id) || source.post_count || 0)}</p>
-                    <p className="text-[11px] text-muted-foreground">Posts</p>
-                  </div>
-                  <div className="rounded-xl bg-muted/30 p-3">
-                    <p className="text-sm font-semibold text-foreground">{formatDay(source.last_synced_at)}</p>
-                    <p className="text-[11px] text-muted-foreground">Last Sync</p>
-                  </div>
-                </div>
+                  return (
+                    <>
+                      <div className="flex items-start gap-3">
+                        {source.avatar_url ? (
+                          <img src={source.avatar_url} alt={source.display_name || source.account_handle || "TikTok source"} className="h-12 w-12 rounded-xl object-cover" />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                            <Link2 className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-foreground">{source.display_name || source.account_handle || "TikTok public source"}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {source.source_type === "profile" ? `@${source.account_handle || "profile"}` : "Public video URL"}
+                          </p>
+                        </div>
+                      </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void refreshTikTokPublicSource(source.id)}
-                    disabled={actionLoading === `sync-tiktok-public-${source.id}`}
-                  >
-                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                    Refresh Public Data
-                  </Button>
-                  <a href={source.profile_url || source.source_url} target="_blank" rel="noreferrer">
-                    <Button variant="outline" size="sm">
-                      Open Source
-                    </Button>
-                  </a>
-                </div>
+                      <div className={`grid gap-2 text-center ${source.source_type === "profile" ? "grid-cols-2 xl:grid-cols-4" : "grid-cols-2"}`}>
+                        <div className="rounded-xl bg-muted/30 p-3">
+                          <p className="text-lg font-semibold text-foreground">{compactNumber(capturedPosts)}</p>
+                          <p className="text-[11px] text-muted-foreground">Captured Posts</p>
+                        </div>
+                        {source.source_type === "profile" ? (
+                          <>
+                            <div className="rounded-xl bg-muted/30 p-3">
+                              <p className="text-lg font-semibold text-foreground">{compactNumber(totalProfileVideos || 0)}</p>
+                              <p className="text-[11px] text-muted-foreground">Profile Videos</p>
+                            </div>
+                            <div className="rounded-xl bg-muted/30 p-3">
+                              <p className="text-lg font-semibold text-foreground">{compactNumber(followerCount || 0)}</p>
+                              <p className="text-[11px] text-muted-foreground">Followers</p>
+                            </div>
+                          </>
+                        ) : null}
+                        <div className="rounded-xl bg-muted/30 p-3">
+                          <p className="text-sm font-semibold text-foreground">
+                            {source.source_type === "profile" && typeof likeCount === "number" ? compactNumber(likeCount) : formatDay(source.last_synced_at)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {source.source_type === "profile" && typeof likeCount === "number" ? "Profile Likes" : "Last Sync"}
+                          </p>
+                        </div>
+                      </div>
 
-                <p className="text-xs text-muted-foreground">
-                  {source.last_error_message || source.bio_description || "Public TikTok source monitored outside the official OAuth integration."}
-                </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void refreshTikTokPublicSource(source.id)}
+                          disabled={actionLoading === `sync-tiktok-public-${source.id}`}
+                        >
+                          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                          Refresh Public Data
+                        </Button>
+                        <a href={source.profile_url || source.source_url} target="_blank" rel="noreferrer">
+                          <Button variant="outline" size="sm">
+                            Open Source
+                          </Button>
+                        </a>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground">{monitoringNote}</p>
+                    </>
+                  );
+                })()}
               </div>
             ))
           ) : (

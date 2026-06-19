@@ -174,6 +174,69 @@ function findScriptJsonByIds(html) {
   return null;
 }
 
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function toNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function buildTikTokVideoUrl(handle, postId) {
+  if (!handle || !postId) return null;
+  return `https://www.tiktok.com/@${handle.replace(/^@/, "")}/video/${postId}`;
+}
+
+function extractUserDetailSnapshot(jsonBlob) {
+  const scope = asObject(jsonBlob?.__DEFAULT_SCOPE__);
+  const detail = asObject(scope?.["webapp.user-detail"]);
+  const userInfo = asObject(detail?.userInfo);
+  const user = asObject(userInfo?.user);
+  const statsV2 = asObject(userInfo?.statsV2);
+  const stats = asObject(userInfo?.stats);
+
+  if (!userInfo || !user) {
+    return null;
+  }
+
+  const itemList = asArray(userInfo?.itemList)
+    .map((item) => {
+      if (typeof item === "string") return item;
+      const record = asObject(item);
+      return record?.id || record?.itemId || record?.videoId || null;
+    })
+    .filter((item) => typeof item === "string" && item.length > 0);
+
+  return {
+    handle: typeof user.uniqueId === "string" ? user.uniqueId : null,
+    displayName: typeof user.nickname === "string" ? user.nickname : null,
+    avatarUrl:
+      (typeof user.avatarLarger === "string" && user.avatarLarger) ||
+      (typeof user.avatarMedium === "string" && user.avatarMedium) ||
+      (typeof user.avatarThumb === "string" && user.avatarThumb) ||
+      null,
+    bioDescription: typeof user.signature === "string" ? user.signature : null,
+    secUid: typeof user.secUid === "string" ? user.secUid : null,
+    verified: Boolean(user.verified),
+    stats: {
+      followerCount: toNumber(statsV2?.followerCount ?? stats?.followerCount),
+      followingCount: toNumber(statsV2?.followingCount ?? stats?.followingCount),
+      likeCount: toNumber(statsV2?.heartCount ?? statsV2?.heart ?? stats?.heartCount ?? stats?.heart),
+      videoCount: toNumber(statsV2?.videoCount ?? stats?.videoCount),
+    },
+    itemIds: itemList,
+  };
+}
+
 function collectVideoUrlsFromHtml(html) {
   const matches = html.match(/https?:\/\/www\.tiktok\.com\/@[\w.-]+\/video\/\d+/gi) || [];
   const pathMatches = html.match(/\/@[\w.-]+\/video\/\d+/gi) || [];
@@ -187,25 +250,48 @@ function collectVideoUrlsFromHtml(html) {
 
 function extractProfileSnapshot(html, url) {
   const pathname = new URL(url).pathname;
-  const handle = pathname.split("/").find((segment) => segment.startsWith("@"))?.replace(/^@/, "") || null;
-  const title = findMetaContent(html, ['meta[property="og:title"]', 'meta[name="twitter:title"]']) || handle;
+  const fallbackHandle = pathname.split("/").find((segment) => segment.startsWith("@"))?.replace(/^@/, "") || null;
+  const title = findMetaContent(html, ['meta[property="og:title"]', 'meta[name="twitter:title"]']) || fallbackHandle;
   const description = findMetaContent(html, ['meta[property="og:description"]', 'meta[name="description"]', 'meta[name="twitter:description"]']);
   const image = findMetaContent(html, ['meta[property="og:image"]', 'meta[name="twitter:image"]']);
   const canonical = findMetaContent(html, ['link[rel="canonical"]']) || url;
   const jsonBlob = findScriptJsonByIds(html);
+  const userDetail = extractUserDetailSnapshot(jsonBlob);
   const jsonText = jsonBlob ? JSON.stringify(jsonBlob) : "";
-  const videoUrls = collectVideoUrlsFromHtml(html + "\n" + jsonText);
+  const handle = userDetail?.handle || fallbackHandle;
+  const itemListUrls = (userDetail?.itemIds || [])
+    .map((itemId) => buildTikTokVideoUrl(handle, itemId))
+    .filter(Boolean);
+  const videoUrls = Array.from(
+    new Set([
+      ...itemListUrls,
+      ...collectVideoUrlsFromHtml(html + "\n" + jsonText),
+    ]),
+  ).slice(0, 12);
+  const seoMeta = asObject(jsonBlob?.__DEFAULT_SCOPE__?.["seo.abtest"]);
+  const seoVidList = asArray(seoMeta?.vidList).length;
 
   return {
     handle,
-    displayName: title ? title.replace(/\s+on\s+TikTok.*$/i, "").trim() : handle || "TikTok public source",
-    avatarUrl: image,
+    displayName:
+      userDetail?.displayName ||
+      (title ? title.replace(/\s+on\s+TikTok.*$/i, "").trim() : handle || "TikTok public source"),
+    avatarUrl: userDetail?.avatarUrl || image,
     profileUrl: canonical,
-    bioDescription: description,
+    bioDescription: userDetail?.bioDescription || description,
     videoUrls,
     metadata: {
       pageTitle: getPageTitle(html) || null,
       canonical,
+      secUid: userDetail?.secUid || null,
+      verified: userDetail?.verified || false,
+      followerCount: userDetail?.stats?.followerCount ?? null,
+      followingCount: userDetail?.stats?.followingCount ?? null,
+      likeCount: userDetail?.stats?.likeCount ?? null,
+      videoCount: userDetail?.stats?.videoCount ?? null,
+      discoverableVideoUrlCount: videoUrls.length,
+      itemListCount: userDetail?.itemIds?.length || 0,
+      seoVidListCount: seoVidList || 0,
     },
   };
 }
@@ -417,6 +503,13 @@ export async function listTikTokPublicSources(organizationId) {
       return {
         ...source,
         post_count: count || 0,
+        discoverable_post_count: count || 0,
+        profile_stats: {
+          follower_count: source.metadata?.followerCount ?? null,
+          following_count: source.metadata?.followingCount ?? null,
+          like_count: source.metadata?.likeCount ?? null,
+          video_count: source.metadata?.videoCount ?? null,
+        },
       };
     }),
   );
