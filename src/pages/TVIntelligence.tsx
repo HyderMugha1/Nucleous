@@ -87,6 +87,16 @@ function normalizeTranscriptionError(error: unknown) {
   return message;
 }
 
+function normalizeLoadError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Please try again.";
+
+  if (/tv_tiktok_accounts|tv_tiktok_videos|schema cache/i.test(message)) {
+    return "TikTok database tables are not installed in Supabase yet. Apply the TikTok TV migration, then refresh this page.";
+  }
+
+  return message;
+}
+
 const EMPTY_SUMMARY: TVDashboardSummary = {
   channels: 0,
   videos: 0,
@@ -137,7 +147,7 @@ export default function TVIntelligence() {
     try {
       const selectedChannel = youtubeChannels.find((channel) => channel.channel_name === channelFilter);
 
-      const [statusResponse, dashboardResponse, channelsResponse, videosResponse, tiktokAccountsResponse, tiktokVideosResponse] = await Promise.all([
+      const [statusResult, dashboardResult, channelsResult, videosResult, tiktokAccountsResult, tiktokVideosResult] = await Promise.allSettled([
         getTVIntegrationStatus(),
         getTVDashboard(),
         getTVYouTubeChannels(),
@@ -150,6 +160,16 @@ export default function TVIntelligence() {
         getTVTikTokVideos({ limit: 18 }),
       ]);
 
+      if (statusResult.status !== "fulfilled") throw statusResult.reason;
+      if (dashboardResult.status !== "fulfilled") throw dashboardResult.reason;
+      if (channelsResult.status !== "fulfilled") throw channelsResult.reason;
+      if (videosResult.status !== "fulfilled") throw videosResult.reason;
+
+      const statusResponse = statusResult.value;
+      const dashboardResponse = dashboardResult.value;
+      const channelsResponse = channelsResult.value;
+      const videosResponse = videosResult.value;
+
       setIntegrationStatus({
         youtubeConfigured: statusResponse.integrations.youtubeConfigured,
         geminiConfigured: statusResponse.integrations.geminiConfigured,
@@ -159,12 +179,27 @@ export default function TVIntelligence() {
       setRecentTranscripts(dashboardResponse.recentTranscripts);
       setYoutubeChannels(channelsResponse.items);
       setYoutubeVideos(videosResponse.items);
-      setTiktokAccounts(tiktokAccountsResponse.items);
-      setTiktokVideos(tiktokVideosResponse.items);
+
+      if (tiktokAccountsResult.status === "fulfilled") {
+        setTiktokAccounts(tiktokAccountsResult.value.items);
+      } else {
+        setTiktokAccounts([]);
+        toast({
+          title: "TikTok data unavailable",
+          description: normalizeLoadError(tiktokAccountsResult.reason),
+          variant: "destructive",
+        });
+      }
+
+      if (tiktokVideosResult.status === "fulfilled") {
+        setTiktokVideos(tiktokVideosResult.value.items);
+      } else {
+        setTiktokVideos([]);
+      }
     } catch (error) {
       toast({
         title: "Unable to load TV intelligence",
-        description: error instanceof Error ? error.message : "Please try again.",
+        description: normalizeLoadError(error),
         variant: "destructive",
       });
     } finally {
