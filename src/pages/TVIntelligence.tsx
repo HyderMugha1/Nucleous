@@ -2,11 +2,14 @@ import { PageVisualDeck } from "@/components/PageVisualDeck";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  createTVTikTokPublicSource,
   createTVYouTubeChannel,
   getTVDashboard,
   getTVIntegrationStatus,
   getTVTikTokAccounts,
   getTVTikTokConnectUrl,
+  getTVTikTokPublicPosts,
+  getTVTikTokPublicSources,
   getTVTikTokVideos,
   getTVYouTubeChannels,
   getTVYouTubeVideos,
@@ -14,10 +17,13 @@ import {
   retryTVVideoProcessing,
   searchTVTranscripts,
   syncTVTikTokAccount,
+  syncTVTikTokPublicSource,
   syncTVYouTubeChannel,
   type TVDashboardSummary,
   type TVRecentTranscriptRecord,
   type TVTikTokAccountRecord,
+  type TVTikTokPublicPostRecord,
+  type TVTikTokPublicSourceRecord,
   type TVTikTokVideoRecord,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
@@ -29,6 +35,7 @@ import {
   Calendar,
   Clock3,
   ExternalLink,
+  Link2,
   Music2,
   PlayCircle,
   RefreshCw,
@@ -90,8 +97,8 @@ function normalizeTranscriptionError(error: unknown) {
 function normalizeLoadError(error: unknown) {
   const message = error instanceof Error ? error.message : "Please try again.";
 
-  if (/tv_tiktok_accounts|tv_tiktok_videos|schema cache/i.test(message)) {
-    return "TikTok database tables are not installed in Supabase yet. Apply the TikTok TV migration, then refresh this page.";
+  if (/tv_tiktok_accounts|tv_tiktok_videos|tv_tiktok_public_sources|tv_tiktok_public_posts|schema cache/i.test(message)) {
+    return "TikTok database tables are not installed in Supabase yet. Apply the TikTok TV migrations, then refresh this page.";
   }
 
   return message;
@@ -126,10 +133,13 @@ export default function TVIntelligence() {
   const [youtubeVideos, setYoutubeVideos] = useState<TVYouTubeVideoRecord[]>([]);
   const [tiktokAccounts, setTiktokAccounts] = useState<TVTikTokAccountRecord[]>([]);
   const [tiktokVideos, setTiktokVideos] = useState<TVTikTokVideoRecord[]>([]);
+  const [tiktokPublicSources, setTiktokPublicSources] = useState<TVTikTokPublicSourceRecord[]>([]);
+  const [tiktokPublicPosts, setTiktokPublicPosts] = useState<TVTikTokPublicPostRecord[]>([]);
   const [transcriptResults, setTranscriptResults] = useState<TVTranscriptSearchRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [youtubeChannelId, setYoutubeChannelId] = useState("");
+  const [tiktokPublicUrl, setTiktokPublicUrl] = useState("");
   const [videoSearch, setVideoSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<string>("All");
   const [transcriptSearch, setTranscriptSearch] = useState("");
@@ -147,7 +157,16 @@ export default function TVIntelligence() {
     try {
       const selectedChannel = youtubeChannels.find((channel) => channel.channel_name === channelFilter);
 
-      const [statusResult, dashboardResult, channelsResult, videosResult, tiktokAccountsResult, tiktokVideosResult] = await Promise.allSettled([
+      const [
+        statusResult,
+        dashboardResult,
+        channelsResult,
+        videosResult,
+        tiktokAccountsResult,
+        tiktokVideosResult,
+        tiktokPublicSourcesResult,
+        tiktokPublicPostsResult,
+      ] = await Promise.allSettled([
         getTVIntegrationStatus(),
         getTVDashboard(),
         getTVYouTubeChannels(),
@@ -158,6 +177,8 @@ export default function TVIntelligence() {
         }),
         getTVTikTokAccounts(),
         getTVTikTokVideos({ limit: 18 }),
+        getTVTikTokPublicSources(),
+        getTVTikTokPublicPosts({ limit: 18 }),
       ]);
 
       if (statusResult.status !== "fulfilled") throw statusResult.reason;
@@ -195,6 +216,23 @@ export default function TVIntelligence() {
         setTiktokVideos(tiktokVideosResult.value.items);
       } else {
         setTiktokVideos([]);
+      }
+
+      if (tiktokPublicSourcesResult.status === "fulfilled") {
+        setTiktokPublicSources(tiktokPublicSourcesResult.value.items);
+      } else {
+        setTiktokPublicSources([]);
+        toast({
+          title: "TikTok public monitor unavailable",
+          description: normalizeLoadError(tiktokPublicSourcesResult.reason),
+          variant: "destructive",
+        });
+      }
+
+      if (tiktokPublicPostsResult.status === "fulfilled") {
+        setTiktokPublicPosts(tiktokPublicPostsResult.value.items);
+      } else {
+        setTiktokPublicPosts([]);
       }
     } catch (error) {
       toast({
@@ -274,6 +312,14 @@ export default function TVIntelligence() {
     return counts;
   }, [tiktokVideos]);
 
+  const publicPostsBySource = useMemo(() => {
+    const counts = new Map<string, number>();
+    tiktokPublicPosts.forEach((post) => {
+      counts.set(post.source_id, (counts.get(post.source_id) || 0) + 1);
+    });
+    return counts;
+  }, [tiktokPublicPosts]);
+
   const connectTikTok = async () => {
     try {
       setActionLoading("connect-tiktok");
@@ -304,6 +350,53 @@ export default function TVIntelligence() {
     } catch (error) {
       toast({
         title: "Unable to sync TikTok account",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const addTikTokPublicSource = async () => {
+    if (!tiktokPublicUrl.trim()) return;
+
+    try {
+      setActionLoading("add-tiktok-public");
+      const response = await createTVTikTokPublicSource(tiktokPublicUrl.trim());
+      toast({
+        title: "Public TikTok source added",
+        description: response.syncSummary?.syncedPosts
+          ? `Synced ${response.syncSummary.syncedPosts} public TikTok posts.`
+          : "Public TikTok source saved successfully.",
+      });
+      setTiktokPublicUrl("");
+      await loadTvPage();
+    } catch (error) {
+      toast({
+        title: "Unable to add public TikTok source",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const refreshTikTokPublicSource = async (sourceId: string) => {
+    try {
+      setActionLoading(`sync-tiktok-public-${sourceId}`);
+      const response = await syncTVTikTokPublicSource(sourceId);
+      toast({
+        title: "Public TikTok source refreshed",
+        description: response.syncedPosts
+          ? `${response.syncedPosts} public TikTok posts refreshed successfully.`
+          : "Public TikTok source sync completed successfully.",
+      });
+      await loadTvPage();
+    } catch (error) {
+      toast({
+        title: "Unable to refresh public TikTok source",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -693,6 +786,98 @@ export default function TVIntelligence() {
       <div className="glass-premium rounded-2xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
+            <div className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">TikTok Public Monitor</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Track public TikTok profile or video URLs separately from the official TikTok API connection. Paste a public URL to ingest discoverable posts.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1.2fr_auto]">
+          <Input
+            value={tiktokPublicUrl}
+            onChange={(event) => setTiktokPublicUrl(event.target.value)}
+            placeholder="Add public TikTok profile URL or video URL"
+          />
+          <Button
+            onClick={() => void addTikTokPublicSource()}
+            disabled={!tiktokPublicUrl.trim() || actionLoading === "add-tiktok-public"}
+          >
+            Add Public Source
+          </Button>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          This is a separate public-source monitor. It does not use TikTok OAuth and does not merge with official connected TikTok accounts.
+        </p>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          {tiktokPublicSources.length > 0 ? (
+            tiktokPublicSources.map((source) => (
+              <div key={source.id} className="rounded-2xl border border-border/40 bg-background/40 p-4 space-y-4">
+                <div className="flex items-start gap-3">
+                  {source.avatar_url ? (
+                    <img src={source.avatar_url} alt={source.display_name || source.account_handle || "TikTok source"} className="h-12 w-12 rounded-xl object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <Link2 className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">{source.display_name || source.account_handle || "TikTok public source"}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {source.source_type === "profile" ? `@${source.account_handle || "profile"}` : "Public video URL"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="rounded-xl bg-muted/30 p-3">
+                    <p className="text-lg font-semibold text-foreground">{compactNumber(publicPostsBySource.get(source.id) || source.post_count || 0)}</p>
+                    <p className="text-[11px] text-muted-foreground">Posts</p>
+                  </div>
+                  <div className="rounded-xl bg-muted/30 p-3">
+                    <p className="text-sm font-semibold text-foreground">{formatDay(source.last_synced_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">Last Sync</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshTikTokPublicSource(source.id)}
+                    disabled={actionLoading === `sync-tiktok-public-${source.id}`}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Refresh Public Data
+                  </Button>
+                  <a href={source.profile_url || source.source_url} target="_blank" rel="noreferrer">
+                    <Button variant="outline" size="sm">
+                      Open Source
+                    </Button>
+                  </a>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  {source.last_error_message || source.bio_description || "Public TikTok source monitored outside the official OAuth integration."}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground md:col-span-2">
+              Add a public TikTok profile URL or video URL to monitor public-facing content separately from official account connections.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-premium rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
             <h2 className="text-lg font-semibold text-foreground">Recent YouTube Videos</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Review synced videos, open them on YouTube, and run transcript generation from the workspace.
@@ -807,6 +992,86 @@ export default function TVIntelligence() {
           ) : (
             <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground xl:col-span-2">
               No synced YouTube videos match your current filters yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-premium rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Recent Public TikTok Posts</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              These posts come from the separate public-source monitor, not from the official TikTok account connection.
+            </p>
+          </div>
+          <div className="rounded-full border border-border/50 px-3 py-2 text-xs text-muted-foreground">
+            {compactNumber(tiktokPublicPosts.length)} posts loaded
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          {tiktokPublicPosts.length > 0 ? (
+            tiktokPublicPosts.map((post) => (
+              <div key={post.id} className="rounded-2xl border border-border/40 bg-background/30 p-4 space-y-4">
+                <div className="flex gap-4">
+                  <a href={post.post_url} target="_blank" rel="noreferrer" className="shrink-0">
+                    {post.thumbnail_url ? (
+                      <img src={post.thumbnail_url} alt={post.title || "TikTok public post"} className="h-28 w-28 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-28 w-28 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <PlayCircle className="h-6 w-6" />
+                      </div>
+                    )}
+                  </a>
+
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                        Public Monitor
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {post.tv_tiktok_public_sources?.display_name || post.author_name || "TikTok public source"}
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="line-clamp-2 text-base font-semibold text-foreground">{post.title || "Untitled public TikTok post"}</p>
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {post.published_at ? formatDay(post.published_at) : "Unknown date"}
+                        </span>
+                        <span>{post.author_name || post.tv_tiktok_public_sources?.account_handle || "Public author"}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-sm text-muted-foreground">
+                      {post.video_description || "No public post description is available yet."}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2">
+                      <a href={post.post_url} target="_blank" rel="noreferrer">
+                        <Button variant="outline" size="sm">
+                          Open Public Post
+                          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                        </Button>
+                      </a>
+                      {post.author_url ? (
+                        <a href={post.author_url} target="_blank" rel="noreferrer">
+                          <Button variant="outline" size="sm">
+                            Open Author
+                          </Button>
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground xl:col-span-2">
+              No public TikTok posts have been captured yet. Add a public profile or video URL above to start monitoring.
             </div>
           )}
         </div>

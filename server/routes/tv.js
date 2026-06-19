@@ -14,6 +14,12 @@ import {
   searchTranscriptSegments,
   syncChannelVideos,
 } from "../modules/tv/service.js";
+import {
+  createOrSyncTikTokPublicSource,
+  listTikTokPublicPosts,
+  listTikTokPublicSources,
+  syncTikTokPublicSourceById,
+} from "../modules/tv/tiktokPublic.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -215,6 +221,76 @@ router.get(
     });
 
     return ok(res, { items });
+  }),
+);
+
+router.get(
+  "/tiktok-public/sources",
+  asyncHandler(async (req, res) => {
+    const items = await listTikTokPublicSources(req.auth.organizationId);
+    return ok(res, { items });
+  }),
+);
+
+router.post(
+  "/tiktok-public/sources",
+  asyncHandler(async (req, res) => {
+    const url = String(req.body.url || "").trim();
+    if (!url) {
+      return res.status(400).json({ message: "url is required" });
+    }
+
+    const result = await createOrSyncTikTokPublicSource({
+      organizationId: req.auth.organizationId,
+      createdBy: req.auth.userId,
+      url,
+    });
+
+    return created(res, {
+      item: result.source,
+      syncSummary: {
+        syncedPosts: result.posts.length,
+      },
+    });
+  }),
+);
+
+router.post(
+  "/tiktok-public/sources/:id/sync",
+  asyncHandler(async (req, res) => {
+    const result = await syncTikTokPublicSourceById({
+      organizationId: req.auth.organizationId,
+      sourceId: req.params.id,
+    });
+
+    return created(res, {
+      queued: false,
+      syncedPosts: result.posts.length,
+      item: result.source,
+    });
+  }),
+);
+
+router.get(
+  "/tiktok-public/posts",
+  asyncHandler(async (req, res) => {
+    const { page, limit } = parsePagination(req.query);
+    const result = await listTikTokPublicPosts({
+      organizationId: req.auth.organizationId,
+      sourceId: req.query.sourceId ? String(req.query.sourceId) : null,
+      page,
+      limit,
+    });
+
+    return ok(res, {
+      items: result.items,
+      pagination: {
+        page,
+        limit,
+        total: result.total,
+        pages: Math.max(1, Math.ceil(result.total / limit)),
+      },
+    });
   }),
 );
 

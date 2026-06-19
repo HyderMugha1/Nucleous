@@ -437,6 +437,51 @@ export interface TVTikTokVideoRecord {
   };
 }
 
+export interface TVTikTokPublicSourceRecord {
+  id: string;
+  source_type: "profile" | "video";
+  source_url: string;
+  normalized_url: string;
+  account_handle?: string;
+  display_name?: string;
+  avatar_url?: string;
+  profile_url?: string;
+  bio_description?: string;
+  status: string;
+  last_synced_at?: string;
+  last_error_message?: string;
+  post_count?: number;
+  created_at: string;
+}
+
+export interface TVTikTokPublicPostRecord {
+  id: string;
+  source_id: string;
+  external_post_id?: string;
+  post_url: string;
+  normalized_post_url: string;
+  title?: string;
+  video_description?: string;
+  thumbnail_url?: string;
+  author_name?: string;
+  author_url?: string;
+  embed_html?: string;
+  published_at?: string;
+  like_count?: number;
+  comment_count?: number;
+  share_count?: number;
+  view_count?: number;
+  created_at: string;
+  tv_tiktok_public_sources?: {
+    id: string;
+    display_name?: string;
+    avatar_url?: string;
+    account_handle?: string;
+    source_type?: string;
+    profile_url?: string;
+  };
+}
+
 export interface TVTranscriptSearchRecord {
   id: string;
   matchText: string;
@@ -1138,6 +1183,58 @@ function mapTVTikTokVideoRecord(item: DbRecord): TVTikTokVideoRecord {
   };
 }
 
+function mapTVTikTokPublicSourceRecord(item: DbRecord): TVTikTokPublicSourceRecord {
+  return {
+    id: asString(item.id),
+    source_type: (asString(item.source_type) || "profile") as TVTikTokPublicSourceRecord["source_type"],
+    source_url: asString(item.source_url),
+    normalized_url: asString(item.normalized_url),
+    account_handle: asOptionalString(item.account_handle),
+    display_name: asOptionalString(item.display_name),
+    avatar_url: asOptionalString(item.avatar_url),
+    profile_url: asOptionalString(item.profile_url),
+    bio_description: asOptionalString(item.bio_description),
+    status: asString(item.status),
+    last_synced_at: asOptionalString(item.last_synced_at),
+    last_error_message: asOptionalString(item.last_error_message),
+    post_count: typeof item.post_count === "number" ? item.post_count : undefined,
+    created_at: asString(item.created_at),
+  };
+}
+
+function mapTVTikTokPublicPostRecord(item: DbRecord): TVTikTokPublicPostRecord {
+  const source = asRecord(item.tv_tiktok_public_sources);
+  return {
+    id: asString(item.id),
+    source_id: asString(item.source_id),
+    external_post_id: asOptionalString(item.external_post_id),
+    post_url: asString(item.post_url),
+    normalized_post_url: asString(item.normalized_post_url),
+    title: asOptionalString(item.title),
+    video_description: asOptionalString(item.video_description),
+    thumbnail_url: asOptionalString(item.thumbnail_url),
+    author_name: asOptionalString(item.author_name),
+    author_url: asOptionalString(item.author_url),
+    embed_html: asOptionalString(item.embed_html),
+    published_at: asOptionalString(item.published_at),
+    like_count: typeof item.like_count === "number" ? item.like_count : undefined,
+    comment_count: typeof item.comment_count === "number" ? item.comment_count : undefined,
+    share_count: typeof item.share_count === "number" ? item.share_count : undefined,
+    view_count: typeof item.view_count === "number" ? item.view_count : undefined,
+    created_at: asString(item.created_at),
+    tv_tiktok_public_sources: source
+      ? {
+          id: asString(source.id),
+          display_name: asOptionalString(source.display_name),
+          avatar_url: asOptionalString(source.avatar_url),
+          account_handle: asOptionalString(source.account_handle),
+          source_type: asOptionalString(source.source_type),
+          profile_url: asOptionalString(source.profile_url),
+        }
+      : undefined,
+  };
+}
+
 function mapInfluencerRecord(item: DbRecord): InfluencerRecord {
   return {
     _id: asString(item.id),
@@ -1749,6 +1846,43 @@ export async function getTVTikTokVideos(params?: {
   const response = await request<{ items: DbRecord[]; pagination: { total: number; page: number; pages: number; limit: number } }>(`/tiktok/videos${suffix}`);
   return {
     items: response.items.map(mapTVTikTokVideoRecord),
+    pagination: response.pagination,
+  };
+}
+
+export async function getTVTikTokPublicSources() {
+  const response = await request<{ items: DbRecord[] }>("/tv/tiktok-public/sources");
+  return {
+    items: response.items.map(mapTVTikTokPublicSourceRecord),
+  };
+}
+
+export async function createTVTikTokPublicSource(url: string) {
+  return request<{ item: TVTikTokPublicSourceRecord; syncSummary?: { syncedPosts: number } }>("/tv/tiktok-public/sources", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+}
+
+export async function syncTVTikTokPublicSource(sourceId: string) {
+  return request<{ queued: boolean; syncedPosts?: number; item?: TVTikTokPublicSourceRecord }>(`/tv/tiktok-public/sources/${sourceId}/sync`, {
+    method: "POST",
+  });
+}
+
+export async function getTVTikTokPublicPosts(params?: {
+  sourceId?: string;
+  limit?: number;
+  page?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.sourceId) query.set("sourceId", params.sourceId);
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.page) query.set("page", String(params.page));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<{ items: DbRecord[]; pagination: { total: number; page: number; pages: number; limit: number } }>(`/tv/tiktok-public/posts${suffix}`);
+  return {
+    items: response.items.map(mapTVTikTokPublicPostRecord),
     pagination: response.pagination,
   };
 }
