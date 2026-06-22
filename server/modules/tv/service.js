@@ -15,6 +15,10 @@ import {
   refreshTikTokAccessToken,
 } from "./tiktok.js";
 
+function isGeminiQuotaErrorMessage(message) {
+  return /quota exceeded|rate limit|429/i.test(String(message || ""));
+}
+
 function ensureAdminClient() {
   if (!supabaseAdmin) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is required");
@@ -413,7 +417,14 @@ export async function syncChannelVideos({ organizationId, channelId, maxVideos =
   return { channel, videos: savedVideos || [] };
 }
 
-export async function listTvVideos({ organizationId, channelId = null, search = "", page = 1, limit = 20 }) {
+export async function listTvVideos({
+  organizationId,
+  channelId = null,
+  search = "",
+  page = 1,
+  limit = 20,
+  status = "all",
+}) {
   ensureAdminClient();
   const skip = (page - 1) * limit;
   let query = supabaseAdmin
@@ -425,6 +436,13 @@ export async function listTvVideos({ organizationId, channelId = null, search = 
 
   if (channelId) query = query.eq("channel_id", channelId);
   if (search) query = query.or(`title.ilike.%${search}%,youtube_video_id.ilike.%${search}%`);
+  if (status === "transcribed") {
+    query = query.not("transcript_text", "is", null);
+  } else if (status === "non_transcribed") {
+    query = query.in("processing_status", ["pending", "failed"]).is("transcript_text", null);
+  } else if (status === "processing") {
+    query = query.in("processing_status", ["queued", "processing"]).is("transcript_text", null);
+  }
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
@@ -487,7 +505,14 @@ export async function listTvVideos({ organizationId, channelId = null, search = 
   };
 }
 
-export async function processVideoTranscription({ organizationId, videoId, generateSrt = true }) {
+export async function processVideoTranscription({
+  organizationId,
+  videoId,
+  generateSrt = true,
+  processingLogId = null,
+  jobType = "video_transcription",
+  trigger = "manual",
+}) {
   ensureAdminClient();
 
   const { data: video, error: videoError } = await supabaseAdmin
@@ -501,12 +526,35 @@ export async function processVideoTranscription({ organizationId, videoId, gener
     throw new Error(videoError?.message || "TV video not found");
   }
 
+  let createdLogId = null;
+
   await supabaseAdmin
     .from("tv_youtube_videos")
     .update({ processing_status: "processing" })
     .eq("id", video.id);
 
   try {
+    if (!processingLogId) {
+      const { data: logRow, error: logError } = await supabaseAdmin
+        .from("tv_processing_logs")
+        .insert({
+          organization_id: organizationId,
+          channel_id: video.channel_id,
+          video_id: video.id,
+          job_type: jobType,
+          job_status: "processing",
+          provider: "gemini",
+          payload: { trigger },
+          attempts: 1,
+        })
+        .select("id")
+        .single();
+
+      if (!logError && logRow?.id) {
+        createdLogId = logRow.id;
+      }
+    }
+
     const transcript = await transcribeYouTubeVideoWithGemini(video.youtube_url);
     const normalizedSegments = transcript.segments.map((segment) => ({
       organization_id: organizationId,
@@ -547,14 +595,204 @@ export async function processVideoTranscription({ organizationId, videoId, gener
       await generateAndStoreSrt({ organizationId, videoId: video.id });
     }
 
+    if (createdLogId) {
+      await supabaseAdmin
+        .from("tv_processing_logs")
+        .update({
+          job_status: "completed",
+          provider: "gemini",
+          error_message: null,
+          error_code: null,
+          payload: {
+            trigger,
+            segmentCount: normalizedSegments.length,
+            generatedSrt: generateSrt,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", createdLogId);
+    }
+
     return { videoId: video.id, segmentCount: normalizedSegments.length };
   } catch (error) {
     await supabaseAdmin
       .from("tv_youtube_videos")
       .update({ processing_status: "failed", last_processed_at: new Date().toISOString() })
       .eq("id", video.id);
+
+    if (createdLogId) {
+      await supabaseAdmin
+        .from("tv_processing_logs")
+        .update({
+          job_status: "failed",
+          provider: "gemini",
+          error_message: error instanceof Error ? error.message : "TV transcription failed",
+          error_code: isGeminiQuotaErrorMessage(error instanceof Error ? error.message : "") ? "GEMINI_QUOTA" : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", createdLogId);
+    }
     throw error;
   }
+}
+
+export async function getTvAutoTranscriptionQuotaStatus() {
+  ensureAdminClient();
+
+  const windowStart = new Date(Date.now() - config.tvAutoTranscribeWindowHours * 60 * 60 * 1000).toISOString();
+  const dailyLimit = Math.max(0, config.tvAutoTranscribeDailyLimit);
+
+  const { count, error } = await supabaseAdmin
+    .from("tv_processing_logs")
+    .select("id", { count: "exact", head: true })
+    .in("job_type", ["video_transcription", "retry_failed"])
+    .eq("job_status", "completed")
+    .gte("updated_at", windowStart);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const used = count || 0;
+
+  return {
+    dailyLimit,
+    used,
+    remaining: Math.max(0, dailyLimit - used),
+    windowStart,
+  };
+}
+
+async function listAutoTranscriptionCandidates({ limit }) {
+  ensureAdminClient();
+
+  if (limit <= 0) {
+    return [];
+  }
+
+  const pendingResponse = await supabaseAdmin
+    .from("tv_youtube_videos")
+    .select("id, organization_id, processing_status, published_at, last_processed_at")
+    .is("transcript_text", null)
+    .eq("processing_status", "pending")
+    .order("published_at", { ascending: false })
+    .limit(limit);
+
+  if (pendingResponse.error) {
+    throw new Error(pendingResponse.error.message);
+  }
+
+  const pendingItems = pendingResponse.data || [];
+  if (pendingItems.length >= limit) {
+    return pendingItems;
+  }
+
+  const retryCutoff = new Date(Date.now() - config.tvAutoTranscribeRetryFailedAfterHours * 60 * 60 * 1000).toISOString();
+  const failedResponse = await supabaseAdmin
+    .from("tv_youtube_videos")
+    .select("id, organization_id, processing_status, published_at, last_processed_at")
+    .is("transcript_text", null)
+    .eq("processing_status", "failed")
+    .lt("last_processed_at", retryCutoff)
+    .order("last_processed_at", { ascending: true })
+    .limit(limit - pendingItems.length);
+
+  if (failedResponse.error) {
+    throw new Error(failedResponse.error.message);
+  }
+
+  return [...pendingItems, ...(failedResponse.data || [])];
+}
+
+export async function runTvAutoTranscriptionCycle() {
+  ensureAdminClient();
+
+  if (config.tvAutoTranscribeEnabled !== "true") {
+    return {
+      enabled: false,
+      processed: 0,
+      failed: 0,
+      dailyLimit: Math.max(0, config.tvAutoTranscribeDailyLimit),
+      used: 0,
+      remaining: 0,
+      stoppedReason: "Auto transcription disabled",
+      items: [],
+    };
+  }
+
+  if (!config.geminiApiKey) {
+    return {
+      enabled: true,
+      processed: 0,
+      failed: 0,
+      dailyLimit: Math.max(0, config.tvAutoTranscribeDailyLimit),
+      used: 0,
+      remaining: 0,
+      stoppedReason: "Gemini API key missing",
+      items: [],
+    };
+  }
+
+  const quota = await getTvAutoTranscriptionQuotaStatus();
+  const allowedThisRun = Math.min(
+    Math.max(0, config.tvAutoTranscribeBatchSize),
+    quota.remaining,
+  );
+
+  if (allowedThisRun <= 0) {
+    return {
+      enabled: true,
+      processed: 0,
+      failed: 0,
+      dailyLimit: quota.dailyLimit,
+      used: quota.used,
+      remaining: quota.remaining,
+      stoppedReason: "Daily Gemini transcription quota reached",
+      items: [],
+    };
+  }
+
+  const candidates = await listAutoTranscriptionCandidates({ limit: allowedThisRun });
+  const results = [];
+  let processed = 0;
+  let failed = 0;
+  let stoppedReason = candidates.length === 0 ? "No queued videos are eligible for automatic transcription" : null;
+
+  for (const candidate of candidates) {
+    try {
+      const item = await processVideoTranscription({
+        organizationId: candidate.organization_id,
+        videoId: candidate.id,
+        generateSrt: true,
+        jobType: candidate.processing_status === "failed" ? "retry_failed" : "video_transcription",
+        trigger: "auto-cron",
+      });
+      processed += 1;
+      results.push({ videoId: candidate.id, organizationId: candidate.organization_id, status: "completed", segmentCount: item.segmentCount });
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : "Auto transcription failed";
+      results.push({ videoId: candidate.id, organizationId: candidate.organization_id, status: "failed", error: message });
+
+      if (isGeminiQuotaErrorMessage(message)) {
+        stoppedReason = "Gemini quota exhausted during auto transcription";
+        break;
+      }
+    }
+  }
+
+  const refreshedQuota = await getTvAutoTranscriptionQuotaStatus();
+
+  return {
+    enabled: true,
+    processed,
+    failed,
+    dailyLimit: refreshedQuota.dailyLimit,
+    used: refreshedQuota.used,
+    remaining: refreshedQuota.remaining,
+    stoppedReason,
+    items: results,
+  };
 }
 
 export async function generateAndStoreSrt({ organizationId, videoId }) {

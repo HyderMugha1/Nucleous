@@ -27,6 +27,7 @@ import {
   type TVTikTokVideoRecord,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
+  type TVYouTubeVideoFilterStatus,
   type TVYouTubeVideoRecord,
 } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -121,6 +122,8 @@ const EMPTY_SUMMARY: TVDashboardSummary = {
   latestChannelSyncAt: null,
 };
 
+const VIDEO_PAGE_SIZE = 24;
+
 export default function TVIntelligence() {
   const [integrationStatus, setIntegrationStatus] = useState<{
     youtubeConfigured: boolean | null;
@@ -146,6 +149,9 @@ export default function TVIntelligence() {
   const [tiktokPublicUrl, setTiktokPublicUrl] = useState("");
   const [videoSearch, setVideoSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<string>("All");
+  const [videoStatusFilter, setVideoStatusFilter] = useState<TVYouTubeVideoFilterStatus>("all");
+  const [videoPage, setVideoPage] = useState(1);
+  const [videoPagination, setVideoPagination] = useState({ page: 1, limit: VIDEO_PAGE_SIZE, total: 0, pages: 1 });
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
@@ -175,7 +181,9 @@ export default function TVIntelligence() {
         getTVDashboard(),
         getTVYouTubeChannels(),
         getTVYouTubeVideos({
-          limit: 18,
+          limit: VIDEO_PAGE_SIZE,
+          page: videoPage,
+          status: videoStatusFilter,
           search: deferredVideoSearch.trim() || undefined,
           channelId: selectedChannel?.id,
         }),
@@ -204,6 +212,7 @@ export default function TVIntelligence() {
       setRecentTranscripts(dashboardResponse.recentTranscripts);
       setYoutubeChannels(channelsResponse.items);
       setYoutubeVideos(videosResponse.items);
+      setVideoPagination(videosResponse.pagination);
 
       if (tiktokAccountsResult.status === "fulfilled") {
         setTiktokAccounts(tiktokAccountsResult.value.items);
@@ -249,7 +258,7 @@ export default function TVIntelligence() {
         setLoading(false);
       }
     }
-  }, [channelFilter, deferredVideoSearch, youtubeChannels]);
+  }, [channelFilter, deferredVideoSearch, videoPage, videoStatusFilter, youtubeChannels]);
 
   useEffect(() => {
     void loadTvPage({ withGlobalLoader: true });
@@ -259,6 +268,10 @@ export default function TVIntelligence() {
     if (loading) return;
     void loadTvPage();
   }, [loadTvPage, loading]);
+
+  useEffect(() => {
+    setVideoPage(1);
+  }, [channelFilter, deferredVideoSearch, videoStatusFilter]);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -306,6 +319,29 @@ export default function TVIntelligence() {
       { label: "Pending", value: summary.pendingVideos },
     ],
     [summary],
+  );
+
+  const videoStatusOptions = useMemo(
+    () => [
+      { key: "all" as const, label: "All Synced Videos", value: summary.videos },
+      { key: "transcribed" as const, label: "Transcribed Videos", value: summary.completedVideos },
+      {
+        key: "non_transcribed" as const,
+        label: "Non Transcribed Videos",
+        value: summary.pendingVideos + summary.failedVideos,
+      },
+      {
+        key: "processing" as const,
+        label: "Processing Videos",
+        value: summary.processingVideos + summary.queuedVideos,
+      },
+    ],
+    [summary],
+  );
+
+  const transcribableVisibleVideos = useMemo(
+    () => youtubeVideos.filter((video) => ["pending", "failed"].includes(video.processing_status)),
+    [youtubeVideos],
   );
 
   const tiktokStatsByAccount = useMemo(() => {
@@ -468,6 +504,54 @@ export default function TVIntelligence() {
     } catch (error) {
       toast({
         title: retry ? "Retry failed" : "Unable to transcribe video",
+        description: normalizeTranscriptionError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const transcribeVisibleVideos = async () => {
+    if (transcribableVisibleVideos.length === 0) {
+      toast({
+        title: "No videos ready for transcription",
+        description: "Try the Non Transcribed or Processing filters to find videos that still need transcript work.",
+      });
+      return;
+    }
+
+    try {
+      setActionLoading("process-visible");
+      let completed = 0;
+      let failed = 0;
+      let lastError: string | null = null;
+
+      for (const video of transcribableVisibleVideos) {
+        try {
+          if (video.processing_status === "failed") {
+            await retryTVVideoProcessing(video.id);
+          } else {
+            await processTVYouTubeVideo(video.id);
+          }
+          completed += 1;
+        } catch (error) {
+          failed += 1;
+          lastError = normalizeTranscriptionError(error);
+        }
+      }
+
+      toast({
+        title: "Visible video transcription finished",
+        description:
+          failed > 0
+            ? `${completed} videos transcribed, ${failed} failed. ${lastError || "Open a video card to see the latest failure reason."}`
+            : `${completed} videos transcribed successfully.`,
+      });
+      await loadTvPage();
+    } catch (error) {
+      toast({
+        title: "Bulk transcription failed",
         description: normalizeTranscriptionError(error),
         variant: "destructive",
       });
@@ -912,10 +996,27 @@ export default function TVIntelligence() {
       <div className="glass-premium rounded-2xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Recent YouTube Videos</h2>
+            <h2 className="text-lg font-semibold text-foreground">All Synced YouTube Videos</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Review synced videos, open them on YouTube, and run transcript generation from the workspace.
+              Review synced videos, filter them by transcript state, open them on YouTube, and run transcript generation from the workspace.
             </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-full border border-border/50 px-3 py-2 text-xs text-muted-foreground">
+              Showing {youtubeVideos.length} of {videoPagination.total} synced videos
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void transcribeVisibleVideos()}
+              disabled={
+                integrationStatus.geminiConfigured === false ||
+                actionLoading === "process-visible" ||
+                transcribableVisibleVideos.length === 0
+              }
+            >
+              {actionLoading === "process-visible" ? "Transcribing..." : `Transcribe Visible Videos (${transcribableVisibleVideos.length})`}
+            </Button>
           </div>
         </div>
 
@@ -944,6 +1045,22 @@ export default function TVIntelligence() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {videoStatusOptions.map((option) => (
+            <button
+              key={option.key}
+              onClick={() => setVideoStatusFilter(option.key)}
+              className={`rounded-full border px-3 py-2 text-xs transition-colors ${
+                videoStatusFilter === option.key
+                  ? "border-primary/20 bg-primary/15 text-primary"
+                  : "border-border/50 text-muted-foreground"
+              }`}
+            >
+              {option.label} ({compactNumber(option.value)})
+            </button>
+          ))}
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
@@ -1004,9 +1121,14 @@ export default function TVIntelligence() {
                         variant="outline"
                         size="sm"
                         onClick={() => void transcribeVideo(video.id)}
-                        disabled={integrationStatus.geminiConfigured === false || actionLoading === `process-${video.id}`}
+                        disabled={
+                          integrationStatus.geminiConfigured === false ||
+                          actionLoading === `process-${video.id}` ||
+                          actionLoading === "process-visible" ||
+                          ["processing", "queued"].includes(video.processing_status)
+                        }
                       >
-                        Generate Transcript
+                        {video.processing_status === "completed" ? "Re-transcribe" : "Transcribe Video"}
                       </Button>
                       {video.processing_status === "failed" ? (
                         <Button
@@ -1028,6 +1150,30 @@ export default function TVIntelligence() {
               No synced YouTube videos match your current filters yet.
             </div>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            Page {videoPagination.page} of {videoPagination.pages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setVideoPage((current) => Math.max(1, current - 1))}
+              disabled={videoPagination.page <= 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setVideoPage((current) => Math.min(videoPagination.pages, current + 1))}
+              disabled={videoPagination.page >= videoPagination.pages}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1237,7 +1383,9 @@ export default function TVIntelligence() {
               ))
             ) : (
               <p className="text-sm text-muted-foreground">
-                Search transcript segments to jump straight into the matching YouTube moment.
+                {summary.completedVideos > 0
+                  ? "Search transcript segments to jump straight into the matching YouTube moment."
+                  : "No transcripts are available yet. Transcribe one or more synced videos first, then search spoken moments here."}
               </p>
             )}
           </div>

@@ -374,6 +374,8 @@ export interface TVYouTubeVideoRecord {
   };
 }
 
+export type TVYouTubeVideoFilterStatus = "all" | "transcribed" | "non_transcribed" | "processing";
+
 export interface TVDashboardSummary {
   channels: number;
   videos: number;
@@ -1941,13 +1943,17 @@ export async function getTVYouTubeVideos(params?: {
   search?: string;
   channelId?: string;
   limit?: number;
+  page?: number;
+  status?: TVYouTubeVideoFilterStatus;
 }) {
   const query = new URLSearchParams();
   if (params?.search?.trim()) query.set("search", params.search.trim());
   if (params?.channelId) query.set("channelId", params.channelId);
   if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.status && params.status !== "all") query.set("status", params.status);
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  const response = await request<{ items: TVYouTubeVideoDbRecord[]; pagination: { total: number } }>(`/tv/videos${suffix}`);
+  const response = await request<{ items: TVYouTubeVideoDbRecord[]; pagination: { page: number; limit: number; total: number; pages: number } }>(`/tv/videos${suffix}`);
   return {
     items: response.items.map(mapTVYouTubeVideoRecord),
     pagination: response.pagination,

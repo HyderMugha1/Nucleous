@@ -28,6 +28,7 @@ import chatbotRoutes from "./routes/chatbots.js";
 import contactRoutes from "./routes/contact.js";
 import diagnosticRoutes from "./routes/diagnostic.js";
 import tiktokRoutes from "./routes/tiktok.js";
+import cronRoutes from "./routes/cron.js";
 
 function buildAllowedOrigins() {
   const configured = [config.clientUrl].filter(Boolean);
@@ -84,6 +85,7 @@ export function createApp() {
   app.use("/api/auth", authRoutes);
   app.use("/api/contact", contactRoutes);
   app.use("/api/diagnostic", diagnosticRoutes);
+  app.use("/api/cron", cronRoutes);
   app.use("/api/tiktok", tiktokRoutes);
   app.use("/api/dashboard", requireAuth, dashboardRoutes);
   app.use("/api/organizations", requireAuth, organizationRoutes);

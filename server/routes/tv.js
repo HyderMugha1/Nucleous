@@ -130,6 +130,7 @@ router.get(
       organizationId: req.auth.organizationId,
       channelId: req.query.channelId ? String(req.query.channelId) : null,
       search: req.query.search ? String(req.query.search) : "",
+      status: req.query.status ? String(req.query.status) : "all",
       page,
       limit,
     });
@@ -153,6 +154,8 @@ router.post(
       organizationId: req.auth.organizationId,
       videoId: req.params.id,
       generateSrt: true,
+      jobType: "video_transcription",
+      trigger: "manual",
     });
 
     return created(res, { queued: false, item: result });
@@ -165,6 +168,8 @@ router.post(
     const result = await processVideoTranscription({
       organizationId: req.auth.organizationId,
       videoId: req.params.id,
+      jobType: "video_transcription",
+      trigger: "manual-now",
     });
     return ok(res, { item: result });
   }),
@@ -184,6 +189,8 @@ router.post(
       organizationId: req.auth.organizationId,
       videoId: req.params.id,
       generateSrt: true,
+      jobType: "retry_failed",
+      trigger: "manual-retry",
     });
 
     return created(res, { queued: false, item: result });

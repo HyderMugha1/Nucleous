@@ -47,7 +47,13 @@ async function processJob(job) {
     return;
   }
   if (job.job_type === "video_transcription" || job.job_type === "retry_failed") {
-    await processVideoTranscription({ organizationId: job.organization_id, videoId: job.video_id });
+    await processVideoTranscription({
+      organizationId: job.organization_id,
+      videoId: job.video_id,
+      processingLogId: job.id,
+      jobType: job.job_type,
+      trigger: "worker",
+    });
     return;
   }
   if (job.job_type === "tiktok_account_sync") {
