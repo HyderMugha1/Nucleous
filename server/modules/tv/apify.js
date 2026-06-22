@@ -57,6 +57,21 @@ function normalizeTranscriptSegments(transcriptSegments) {
     .filter((segment) => segment.text);
 }
 
+async function runActor(client, videoUrl, language) {
+  const input = {
+    youtube_url: videoUrl,
+    include_transcript_text: false,
+  };
+
+  if (language) {
+    input.language = language;
+  }
+
+  const run = await client.actor(config.tvTranscriptionActorId).call(input);
+  const { items } = await client.dataset(run.defaultDatasetId).listItems();
+  return items || [];
+}
+
 export async function transcribeVideoWithApify(videoUrl) {
   const client = createClient();
 
@@ -65,18 +80,23 @@ export async function transcribeVideoWithApify(videoUrl) {
   }
 
   try {
-    const run = await client.actor(config.tvTranscriptionActorId).call({
-      youtube_url: videoUrl,
-      language: "en",
-      include_transcript_text: false,
-    });
-
-    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    let items = await runActor(client, videoUrl);
     if (!items || items.length === 0) {
       throw new Error("No transcript was returned by the Apify actor");
     }
 
-    const result = items[0];
+    let result = items[0];
+    const availableLanguages = Array.isArray(result.available_languages) ? result.available_languages.filter(Boolean) : [];
+
+    if (
+      String(result.status || "").toLowerCase() === "error" &&
+      /requested language/i.test(String(result.message || "")) &&
+      availableLanguages.length > 0
+    ) {
+      items = await runActor(client, videoUrl, availableLanguages[0]);
+      result = items[0];
+    }
+
     if (String(result.status || "").toLowerCase() === "error") {
       throw new Error(String(result.message || "Apify could not transcribe this YouTube video"));
     }
