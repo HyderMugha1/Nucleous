@@ -28,6 +28,15 @@ function createClient() {
   });
 }
 
+function isValidYouTubeUrl(videoUrl) {
+  try {
+    const parsed = new URL(String(videoUrl || "").trim());
+    return /(^|\.)youtube\.com$/i.test(parsed.hostname) || /^youtu\.be$/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function normalizeTranscriptSegments(transcriptSegments) {
   return transcriptSegments
     .map((segment, index) => {
@@ -51,9 +60,14 @@ function normalizeTranscriptSegments(transcriptSegments) {
 export async function transcribeVideoWithApify(videoUrl) {
   const client = createClient();
 
+  if (!isValidYouTubeUrl(videoUrl)) {
+    throw new Error("Only synced YouTube video URLs can be transcribed with the current Apify actor");
+  }
+
   try {
     const run = await client.actor(config.tvTranscriptionActorId).call({
-      video_url: videoUrl,
+      youtube_url: videoUrl,
+      language: "en",
       include_transcript_text: false,
     });
 
@@ -63,9 +77,13 @@ export async function transcribeVideoWithApify(videoUrl) {
     }
 
     const result = items[0];
+    if (String(result.status || "").toLowerCase() === "error") {
+      throw new Error(String(result.message || "Apify could not transcribe this YouTube video"));
+    }
+
     const transcriptSegments = Array.isArray(result.transcript) ? result.transcript : [];
     if (transcriptSegments.length === 0) {
-      throw new Error("Transcript segments with timestamps were not returned by the Apify actor");
+      throw new Error(String(result.message || "Transcript segments with timestamps were not returned by the Apify actor"));
     }
 
     return {
