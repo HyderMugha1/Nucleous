@@ -89,7 +89,7 @@ function normalizeTranscriptionError(error: unknown) {
   const message = error instanceof Error ? error.message : "Please try again.";
 
   if (/quota|rate limit/i.test(message)) {
-    return "Gemini transcription quota is temporarily exhausted. Wait a short while, then retry this video.";
+    return "The transcription service is temporarily rate-limited. Wait a short while, then retry this video.";
   }
 
   return message;
@@ -127,11 +127,11 @@ const VIDEO_PAGE_SIZE = 24;
 export default function TVIntelligence() {
   const [integrationStatus, setIntegrationStatus] = useState<{
     youtubeConfigured: boolean | null;
-    geminiConfigured: boolean | null;
+    transcriptionConfigured: boolean | null;
     tiktokConfigured: boolean | null;
   }>({
     youtubeConfigured: null,
-    geminiConfigured: null,
+    transcriptionConfigured: null,
     tiktokConfigured: null,
   });
   const [summary, setSummary] = useState<TVDashboardSummary>(EMPTY_SUMMARY);
@@ -205,7 +205,7 @@ export default function TVIntelligence() {
 
       setIntegrationStatus({
         youtubeConfigured: statusResponse.integrations.youtubeConfigured,
-        geminiConfigured: statusResponse.integrations.geminiConfigured,
+        transcriptionConfigured: statusResponse.integrations.transcriptionConfigured,
         tiktokConfigured: statusResponse.integrations.tiktokConfigured,
       });
       setSummary(dashboardResponse.summary);
@@ -597,7 +597,7 @@ export default function TVIntelligence() {
             TV Intelligence
           </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Monitor connected YouTube and TikTok sources, refresh video coverage, run transcript generation, and search directly into spoken moments.
+            Monitor connected YouTube and TikTok sources, refresh video coverage, run Apify-powered transcript generation, and search directly into spoken moments.
           </p>
         </div>
         <Button variant="outline" onClick={() => void loadTvPage({ withGlobalLoader: true })} disabled={loading}>
@@ -998,7 +998,7 @@ export default function TVIntelligence() {
           <div>
             <h2 className="text-lg font-semibold text-foreground">All Synced YouTube Videos</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Review synced videos, filter them by transcript state, open them on YouTube, and run transcript generation from the workspace.
+              Review synced videos, filter them by transcript state, open them on YouTube, and run Apify-powered transcript generation from the workspace.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1010,12 +1010,12 @@ export default function TVIntelligence() {
               size="sm"
               onClick={() => void transcribeVisibleVideos()}
               disabled={
-                integrationStatus.geminiConfigured === false ||
+                integrationStatus.transcriptionConfigured === false ||
                 actionLoading === "process-visible" ||
                 transcribableVisibleVideos.length === 0
               }
             >
-              {actionLoading === "process-visible" ? "Transcribing..." : `Transcribe Visible Videos (${transcribableVisibleVideos.length})`}
+              {actionLoading === "process-visible" ? "Transcribing..." : `Transcribe Visible Videos With Apify (${transcribableVisibleVideos.length})`}
             </Button>
           </div>
         </div>
@@ -1122,20 +1122,20 @@ export default function TVIntelligence() {
                         size="sm"
                         onClick={() => void transcribeVideo(video.id)}
                         disabled={
-                          integrationStatus.geminiConfigured === false ||
+                          integrationStatus.transcriptionConfigured === false ||
                           actionLoading === `process-${video.id}` ||
                           actionLoading === "process-visible" ||
                           ["processing", "queued"].includes(video.processing_status)
                         }
                       >
-                        {video.processing_status === "completed" ? "Re-transcribe" : "Transcribe Video"}
+                        {video.processing_status === "completed" ? "Re-transcribe With Apify" : "Transcribe With Apify"}
                       </Button>
                       {video.processing_status === "failed" ? (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => void transcribeVideo(video.id, true)}
-                          disabled={integrationStatus.geminiConfigured === false || actionLoading === `retry-${video.id}`}
+                          disabled={integrationStatus.transcriptionConfigured === false || actionLoading === `retry-${video.id}`}
                         >
                           Retry
                         </Button>

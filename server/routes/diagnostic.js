@@ -78,7 +78,7 @@ router.get(
         database: "connected",
         integrations: {
           youtubeConfigured: Boolean(config.youtubeApiKey),
-          geminiConfigured: Boolean(config.geminiApiKey),
+          transcriptionConfigured: Boolean(config.apifyToken && config.tvTranscriptionActorId),
           tiktokConfigured: Boolean(config.tiktokClientKey && config.tiktokClientSecret && config.tiktokRedirectUri),
         },
         organizations: {

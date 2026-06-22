@@ -1913,7 +1913,7 @@ export async function getTVIntegrationStatus() {
   return request<{
     integrations: {
       youtubeConfigured: boolean;
-      geminiConfigured: boolean;
+      transcriptionConfigured: boolean;
       tiktokConfigured: boolean;
     };
   }>("/tv/status");

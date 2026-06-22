@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "../../supabase.js";
 import { buildSrt } from "./srt.js";
-import { transcribeYouTubeVideoWithGemini } from "./gemini.js";
+import { transcribeVideoWithApify } from "./apify.js";
 import { normalizeSearchableText, buildYouTubeRedirect } from "./utils.js";
 import { fetchAllChannelVideos, fetchChannelMetadata } from "./youtube.js";
 import { config } from "../../config.js";
@@ -15,8 +15,8 @@ import {
   refreshTikTokAccessToken,
 } from "./tiktok.js";
 
-function isGeminiQuotaErrorMessage(message) {
-  return /quota exceeded|rate limit|429/i.test(String(message || ""));
+function isTranscriptionQuotaErrorMessage(message) {
+  return /quota exceeded|rate limit|429|usage limit|insufficient/i.test(String(message || ""));
 }
 
 function ensureAdminClient() {
@@ -543,7 +543,7 @@ export async function processVideoTranscription({
           video_id: video.id,
           job_type: jobType,
           job_status: "processing",
-          provider: "gemini",
+          provider: "apify",
           payload: { trigger },
           attempts: 1,
         })
@@ -555,7 +555,7 @@ export async function processVideoTranscription({
       }
     }
 
-    const transcript = await transcribeYouTubeVideoWithGemini(video.youtube_url);
+    const transcript = await transcribeVideoWithApify(video.youtube_url);
     const normalizedSegments = transcript.segments.map((segment) => ({
       organization_id: organizationId,
       video_id: video.id,
@@ -600,13 +600,14 @@ export async function processVideoTranscription({
         .from("tv_processing_logs")
         .update({
           job_status: "completed",
-          provider: "gemini",
+          provider: "apify",
           error_message: null,
           error_code: null,
           payload: {
             trigger,
             segmentCount: normalizedSegments.length,
             generatedSrt: generateSrt,
+            actorId: config.tvTranscriptionActorId,
           },
           updated_at: new Date().toISOString(),
         })
@@ -625,9 +626,9 @@ export async function processVideoTranscription({
         .from("tv_processing_logs")
         .update({
           job_status: "failed",
-          provider: "gemini",
+          provider: "apify",
           error_message: error instanceof Error ? error.message : "TV transcription failed",
-          error_code: isGeminiQuotaErrorMessage(error instanceof Error ? error.message : "") ? "GEMINI_QUOTA" : null,
+          error_code: isTranscriptionQuotaErrorMessage(error instanceof Error ? error.message : "") ? "TRANSCRIPTION_QUOTA" : null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", createdLogId);
@@ -720,7 +721,7 @@ export async function runTvAutoTranscriptionCycle() {
     };
   }
 
-  if (!config.geminiApiKey) {
+  if (!config.apifyToken) {
     return {
       enabled: true,
       processed: 0,
@@ -728,7 +729,7 @@ export async function runTvAutoTranscriptionCycle() {
       dailyLimit: Math.max(0, config.tvAutoTranscribeDailyLimit),
       used: 0,
       remaining: 0,
-      stoppedReason: "Gemini API key missing",
+      stoppedReason: "Apify token missing",
       items: [],
     };
   }
@@ -747,7 +748,7 @@ export async function runTvAutoTranscriptionCycle() {
       dailyLimit: quota.dailyLimit,
       used: quota.used,
       remaining: quota.remaining,
-      stoppedReason: "Daily Gemini transcription quota reached",
+      stoppedReason: "Daily transcription limit reached",
       items: [],
     };
   }
@@ -774,8 +775,8 @@ export async function runTvAutoTranscriptionCycle() {
       const message = error instanceof Error ? error.message : "Auto transcription failed";
       results.push({ videoId: candidate.id, organizationId: candidate.organization_id, status: "failed", error: message });
 
-      if (isGeminiQuotaErrorMessage(message)) {
-        stoppedReason = "Gemini quota exhausted during auto transcription";
+      if (isTranscriptionQuotaErrorMessage(message)) {
+        stoppedReason = "Transcription provider quota exhausted during auto transcription";
         break;
       }
     }
