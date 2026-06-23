@@ -82,6 +82,9 @@ export const config = {
   webPaperMaxArticlesPerCrawl: Number(process.env.WEB_PAPER_MAX_ARTICLES_PER_CRAWL || 50),
   webPaperSaveRawHtml: process.env.WEB_PAPER_SAVE_RAW_HTML || "false",
   webPaperInitialBackfillEnabled: process.env.WEB_PAPER_INITIAL_BACKFILL_ENABLED || "true",
+  brandingMonitorEnabled: process.env.BRANDING_MONITOR_ENABLED || "true",
+  brandingMonitorBucket: process.env.SUPABASE_BRANDING_BUCKET || "branding-monitor",
+  brandingMonitorContactEmail: process.env.BRANDING_MONITOR_CONTACT_EMAIL || "contact@example.com",
 };
 
 async function validateResolvableHostname(label, rawUrl) {

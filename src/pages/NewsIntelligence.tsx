@@ -96,7 +96,7 @@ export default function NewsIntelligence() {
     return epaper.filter((clip) => `${clip.headline || ""} ${clip.ocr_text} ${clip.source_name}`.toLowerCase().includes(query));
   }, [epaper, search]);
 
-  const activeRecords = activeTab === "web" ? filteredWebPaper : filteredEPaper;
+  const activeRecords = activeTab === "epaper" ? filteredEPaper : filteredWebPaper;
 
   const trendData = useMemo(() => {
     const buckets = new Map<string, number>();
@@ -212,6 +212,7 @@ export default function NewsIntelligence() {
             </div>
           ))}
         </TabsContent>
+
       </Tabs>
     </div>
   );

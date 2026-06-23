@@ -320,6 +320,84 @@ export interface WebPaperCrawlerStatusResponse {
   websites: WebPaperWebsiteRecord[];
 }
 
+export interface BrandingScanRecord {
+  id: string;
+  news_website_id: string;
+  status: string;
+  progress: number;
+  total_urls: number;
+  completed_urls: number;
+  failed_urls: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+  device_types: string[];
+  capture_full_page: boolean;
+  capture_ad_elements: boolean;
+  use_ai_classification: boolean;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrandingResultRecord {
+  id: string;
+  scan_id: string;
+  news_website_id: string;
+  page_url: string;
+  brand_name?: string | null;
+  ad_type?: string | null;
+  placement?: string | null;
+  confidence?: number | null;
+  selector?: string | null;
+  element_text?: string | null;
+  screenshot_path?: string | null;
+  full_page_screenshot_path?: string | null;
+  screenshot_url?: string | null;
+  full_page_screenshot_url?: string | null;
+  device_type?: string | null;
+  viewport_width?: number | null;
+  viewport_height?: number | null;
+  captured_at?: string | null;
+  status: string;
+  is_false_positive: boolean;
+  screenshot_hash?: string | null;
+  bounding_box?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  branding_scans?: { status?: string | null };
+  web_paper_websites?: { name?: string | null };
+}
+
+export interface BrandingScheduleRecord {
+  id: string;
+  news_website_id: string;
+  enabled: boolean;
+  frequency: "daily" | "weekly" | "monthly";
+  time_of_day: string;
+  device_types: string[];
+  max_urls_per_scan: number;
+  capture_full_page: boolean;
+  capture_ad_elements: boolean;
+  use_ai_classification: boolean;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrandingSummaryRecord {
+  totalPagesScanned: number;
+  totalAdsDetected: number;
+  totalUniqueBrands: number;
+  lastScanTime?: string | null;
+  mostCommonAdPlacement: string;
+  failedScans: number;
+  averageAdsPerPage: number;
+}
+
 export interface TVSegmentRecord {
   id: string;
   channel: string;
@@ -1321,6 +1399,38 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+async function requestBlob(path: string, options: RequestInit = {}) {
+  const token = await getSupabaseAccessToken();
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    let message = "Request failed";
+    try {
+      const data = await response.json();
+      message = data.message || message;
+    } catch {
+      message = response.status
+        ? `Request failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""})`
+        : message;
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
+  return {
+    blob,
+    fileName: fileNameMatch?.[1] || "download",
+  };
+}
+
 export async function signup(payload: SignupPayload) {
   return request<AuthResponse>("/auth/signup", {
     method: "POST",
@@ -1815,6 +1925,154 @@ export async function updateWebPaperCrawlerSettings(payload: {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getNewsBrandingScans(newsId: string, limit = 20) {
+  return request<{ items: BrandingScanRecord[] }>(`/news/${newsId}/branding/scans?limit=${limit}`);
+}
+
+export async function startNewsBrandingScan(
+  newsId: string,
+  payload: {
+    urls?: string[];
+    device_types?: string[];
+    capture_full_page?: boolean;
+    capture_ad_elements?: boolean;
+    use_ai_classification?: boolean;
+    max_urls_per_scan?: number;
+  },
+) {
+  return request<{ scan_id: string; status: string; item: BrandingScanRecord }>(`/news/${newsId}/branding/scans`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getNewsBrandingScanStatus(newsId: string, scanId: string) {
+  return request<{
+    scan_id: string;
+    status: string;
+    progress: number;
+    total_urls: number;
+    completed_urls: number;
+    failed_urls: number;
+    item: BrandingScanRecord;
+  }>(`/news/${newsId}/branding/scans/${scanId}`);
+}
+
+export async function stopNewsBrandingScan(newsId: string, scanId: string) {
+  return request<{ item: BrandingScanRecord }>(`/news/${newsId}/branding/scans/${scanId}/stop`, {
+    method: "POST",
+  });
+}
+
+export async function getNewsBrandingResults(
+  newsId: string,
+  params?: {
+    date_from?: string;
+    date_to?: string;
+    page_url?: string;
+    brand_name?: string;
+    ad_type?: string;
+    placement?: string;
+    device_type?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  },
+) {
+  const query = new URLSearchParams();
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
+  if (params?.page_url) query.set("page_url", params.page_url);
+  if (params?.brand_name) query.set("brand_name", params.brand_name);
+  if (params?.ad_type) query.set("ad_type", params.ad_type);
+  if (params?.placement) query.set("placement", params.placement);
+  if (params?.device_type) query.set("device_type", params.device_type);
+  if (params?.status) query.set("status", params.status);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<{
+    results: BrandingResultRecord[];
+    pagination: { page: number; limit: number; total: number; pages: number };
+    summary: BrandingSummaryRecord;
+    scans: BrandingScanRecord[];
+    schedule?: BrandingScheduleRecord | null;
+  }>(`/news/${newsId}/branding/results${suffix}`);
+}
+
+export async function updateNewsBrandingResult(
+  newsId: string,
+  resultId: string,
+  payload: {
+    brand_name?: string | null;
+    ad_type?: string | null;
+    placement?: string | null;
+    is_false_positive?: boolean;
+    status?: string;
+    confidence?: number;
+  },
+) {
+  return request<{ item: BrandingResultRecord }>(`/news/${newsId}/branding/results/${resultId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteNewsBrandingResult(newsId: string, resultId: string) {
+  return request<{ success: boolean }>(`/news/${newsId}/branding/results/${resultId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getNewsBrandingSchedule(newsId: string) {
+  return request<{ item: BrandingScheduleRecord | null }>(`/news/${newsId}/branding/schedule`);
+}
+
+export async function updateNewsBrandingSchedule(
+  newsId: string,
+  payload: {
+    enabled?: boolean;
+    frequency?: "daily" | "weekly" | "monthly";
+    time?: string;
+    device_types?: string[];
+    max_urls_per_scan?: number;
+    capture_full_page?: boolean;
+    capture_ad_elements?: boolean;
+    use_ai_classification?: boolean;
+  },
+) {
+  return request<{ item: BrandingScheduleRecord }>(`/news/${newsId}/branding/schedule`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function downloadNewsBrandingExport(
+  newsId: string,
+  format: "csv" | "json" | "zip",
+  params?: {
+    date_from?: string;
+    date_to?: string;
+    page_url?: string;
+    brand_name?: string;
+    ad_type?: string;
+    placement?: string;
+    device_type?: string;
+    status?: string;
+  },
+) {
+  const query = new URLSearchParams({ format });
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
+  if (params?.page_url) query.set("page_url", params.page_url);
+  if (params?.brand_name) query.set("brand_name", params.brand_name);
+  if (params?.ad_type) query.set("ad_type", params.ad_type);
+  if (params?.placement) query.set("placement", params.placement);
+  if (params?.device_type) query.set("device_type", params.device_type);
+  if (params?.status) query.set("status", params.status);
+  return requestBlob(`/news/${newsId}/branding/export?${query.toString()}`);
 }
 
 export async function getTVSegments(params?: {

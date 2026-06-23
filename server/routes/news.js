@@ -4,6 +4,18 @@ import { asyncHandler, created, ok } from "../utils/http.js";
 import { parsePagination } from "../utils/query.js";
 import { supabaseAdmin } from "../supabase.js";
 import { deleteArticle as deleteWebPaperArticle, getArticle as getWebPaperArticle, listArticles as listWebPaperArticles } from "../modules/news/webPaperCrawler/services/articleService.js";
+import {
+  deleteBrandingResult,
+  exportBrandingResults,
+  getBrandingScanStatus,
+  getBrandingSchedule,
+  listBrandingResults,
+  listBrandingScans,
+  startBrandingScan,
+  stopBrandingScan,
+  upsertBrandingSchedule,
+  updateBrandingResult,
+} from "../modules/news/branding/service.js";
 import { getCrawlerStatus, runBackfillForOrganization, runManualCrawlForOrganization, runWebsiteCrawl } from "../modules/news/webPaperCrawler/services/crawlerService.js";
 import { listCrawlLogs } from "../modules/news/webPaperCrawler/services/logService.js";
 import { ensureCrawlerSettings, updateCrawlerSettings } from "../modules/news/webPaperCrawler/services/settingsService.js";
@@ -244,6 +256,128 @@ router.patch(
   "/web-paper/crawler/settings",
   asyncHandler(async (req, res) => {
     const item = await updateCrawlerSettings(req.auth.organizationId, req.body || {});
+    return ok(res, { item });
+  }),
+);
+
+router.get(
+  "/:newsId/branding/scans",
+  asyncHandler(async (req, res) => {
+    const items = await listBrandingScans(req.auth.organizationId, req.params.newsId, {
+      limit: Number(req.query.limit || 20),
+    });
+    return ok(res, { items });
+  }),
+);
+
+router.post(
+  "/:newsId/branding/scans",
+  asyncHandler(async (req, res) => {
+    const item = await startBrandingScan({
+      organizationId: req.auth.organizationId,
+      newsWebsiteId: req.params.newsId,
+      payload: req.body || {},
+      userId: req.auth.supabaseUser?.id,
+    });
+    return created(res, {
+      scan_id: item.id,
+      status: item.status,
+      item,
+    });
+  }),
+);
+
+router.get(
+  "/:newsId/branding/scans/:scanId",
+  asyncHandler(async (req, res) => {
+    const item = await getBrandingScanStatus(req.auth.organizationId, req.params.newsId, req.params.scanId);
+    return ok(res, {
+      scan_id: item.id,
+      status: item.status,
+      progress: item.progress,
+      total_urls: item.total_urls,
+      completed_urls: item.completed_urls,
+      failed_urls: item.failed_urls,
+      item,
+    });
+  }),
+);
+
+router.post(
+  "/:newsId/branding/scans/:scanId/stop",
+  asyncHandler(async (req, res) => {
+    const item = await stopBrandingScan(req.auth.organizationId, req.params.newsId, req.params.scanId);
+    return ok(res, { item });
+  }),
+);
+
+router.get(
+  "/:newsId/branding/results",
+  asyncHandler(async (req, res) => {
+    const result = await listBrandingResults(req.auth.organizationId, req.params.newsId, {
+      date_from: req.query.date_from ? String(req.query.date_from) : undefined,
+      date_to: req.query.date_to ? String(req.query.date_to) : undefined,
+      page_url: req.query.page_url ? String(req.query.page_url) : undefined,
+      brand_name: req.query.brand_name ? String(req.query.brand_name) : undefined,
+      ad_type: req.query.ad_type ? String(req.query.ad_type) : undefined,
+      placement: req.query.placement ? String(req.query.placement) : undefined,
+      device_type: req.query.device_type ? String(req.query.device_type) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    return ok(res, result);
+  }),
+);
+
+router.patch(
+  "/:newsId/branding/results/:resultId",
+  asyncHandler(async (req, res) => {
+    const item = await updateBrandingResult(req.auth.organizationId, req.params.newsId, req.params.resultId, req.body || {});
+    return ok(res, { item });
+  }),
+);
+
+router.delete(
+  "/:newsId/branding/results/:resultId",
+  asyncHandler(async (req, res) => {
+    await deleteBrandingResult(req.auth.organizationId, req.params.newsId, req.params.resultId);
+    return ok(res, { success: true });
+  }),
+);
+
+router.get(
+  "/:newsId/branding/export",
+  asyncHandler(async (req, res) => {
+    const format = String(req.query.format || "csv").toLowerCase();
+    const exported = await exportBrandingResults(req.auth.organizationId, req.params.newsId, format, {
+      date_from: req.query.date_from ? String(req.query.date_from) : undefined,
+      date_to: req.query.date_to ? String(req.query.date_to) : undefined,
+      page_url: req.query.page_url ? String(req.query.page_url) : undefined,
+      brand_name: req.query.brand_name ? String(req.query.brand_name) : undefined,
+      ad_type: req.query.ad_type ? String(req.query.ad_type) : undefined,
+      placement: req.query.placement ? String(req.query.placement) : undefined,
+      device_type: req.query.device_type ? String(req.query.device_type) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+    });
+    res.setHeader("Content-Type", exported.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${exported.fileName}"`);
+    return res.send(exported.buffer);
+  }),
+);
+
+router.get(
+  "/:newsId/branding/schedule",
+  asyncHandler(async (req, res) => {
+    const item = await getBrandingSchedule(req.auth.organizationId, req.params.newsId);
+    return ok(res, { item });
+  }),
+);
+
+router.put(
+  "/:newsId/branding/schedule",
+  asyncHandler(async (req, res) => {
+    const item = await upsertBrandingSchedule(req.auth.organizationId, req.params.newsId, req.body || {}, req.auth.supabaseUser?.id);
     return ok(res, { item });
   }),
 );

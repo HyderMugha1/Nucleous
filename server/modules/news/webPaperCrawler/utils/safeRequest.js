@@ -58,12 +58,39 @@ function isBlockedByRobots(url, disallowRules) {
   return disallowRules.some((rule) => rule !== "/" && pathname.startsWith(rule));
 }
 
+export function buildCrawlerUserAgent(label = "NucleusWebPaperCrawler") {
+  return `${label}/1.0 (+${config.siteUrl || "https://app.your-domain.example.com"})`;
+}
+
+export async function assertRobotsAllowed(url, options = {}) {
+  const {
+    timeoutMs = 30000,
+    baseUrl,
+    userAgent = buildCrawlerUserAgent(),
+  } = options;
+
+  if (!baseUrl) return;
+
+  const headers = {
+    "user-agent": userAgent,
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.8",
+  };
+
+  const disallowRules = await loadRobotsRules(baseUrl, headers, timeoutMs);
+  if (isBlockedByRobots(url, disallowRules)) {
+    const error = new Error(`Blocked by robots.txt: ${url}`);
+    error.code = "ROBOTS_BLOCKED";
+    throw error;
+  }
+}
+
 export async function safeRequest(url, options) {
   const {
     retries = 3,
     timeoutMs = 30000,
     delayMs = 2000,
-    userAgent = `NucleusWebPaperCrawler/1.0 (+${config.siteUrl || "https://app.your-domain.example.com"})`,
+    userAgent = buildCrawlerUserAgent(),
     respectRobots = true,
     baseUrl,
   } = options;
@@ -75,12 +102,7 @@ export async function safeRequest(url, options) {
   };
 
   if (respectRobots && baseUrl) {
-    const disallowRules = await loadRobotsRules(baseUrl, headers, timeoutMs);
-    if (isBlockedByRobots(url, disallowRules)) {
-      const error = new Error(`Blocked by robots.txt: ${url}`);
-      error.code = "ROBOTS_BLOCKED";
-      throw error;
-    }
+    await assertRobotsAllowed(url, { timeoutMs, baseUrl, userAgent });
   }
 
   let attempt = 0;

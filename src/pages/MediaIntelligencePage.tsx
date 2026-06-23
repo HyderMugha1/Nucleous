@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { BellRing, Radar, Tv, Newspaper } from "lucide-react";
+import { BellRing, Eye, Radar, Tv, Newspaper } from "lucide-react";
 import { MediaIntelligencePanel } from "@/components/MediaIntelligencePanel";
 import { PageVisualDeck } from "@/components/PageVisualDeck";
+import { WebPaperCrawlerPanel } from "@/components/news/WebPaperCrawlerPanel";
 import { getAlerts, getMediaBrandMonitor, getMediaIntelligenceTrends, type AlertRecord, type MediaBrandMonitorResponse, type MediaTrendResponse } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
@@ -100,6 +101,20 @@ export default function MediaIntelligencePage() {
       />
 
       <MediaIntelligencePanel defaultSource="all" />
+
+      <div className="space-y-4">
+        <div className="glass-premium rounded-2xl p-5">
+          <div className="flex items-center gap-2">
+            <Eye className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold text-foreground">Branding Monitor</h2>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Review ad visibility, sponsored placements, and brand screenshots for connected news websites from the Media Intelligence workspace. Open a website and switch to its <span className="font-medium text-foreground">Branding</span> tab to run scans, manage labels, schedule monitoring, and export evidence.
+          </p>
+        </div>
+
+        <WebPaperCrawlerPanel initialTab="websites" />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="glass-premium rounded-2xl p-5 space-y-4">
