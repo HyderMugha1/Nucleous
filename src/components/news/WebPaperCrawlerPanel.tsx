@@ -176,6 +176,18 @@ function downloadBlobFile(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 500);
 }
 
+function extractBrandingScanUrls(items: WebPaperArticleRecord[] = []) {
+  const unique = new Set<string>();
+  for (const item of items) {
+    const candidates = [item.canonical_url, item.normalized_url, item.url];
+    for (const candidate of candidates) {
+      const value = String(candidate || "").trim();
+      if (value) unique.add(value);
+    }
+  }
+  return Array.from(unique);
+}
+
 export function WebPaperCrawlerPanel({
   initialTab = "articles",
   mode = "full",
@@ -340,8 +352,17 @@ export function WebPaperCrawlerPanel({
       }
 
       if (websitesCoreResult.status === "fulfilled") {
-        setWebsites(websitesCoreResult.value.items);
+        const nextWebsites = websitesCoreResult.value.items;
+        setWebsites(nextWebsites);
         setAvailableScrapers(websitesCoreResult.value.availableScrapers);
+        if (isBrandingOnly && nextWebsites.length > 0) {
+          const preferredWebsite = selectedWebsite
+            ? nextWebsites.find((item) => item.id === selectedWebsite.id) || nextWebsites[0]
+            : nextWebsites[0];
+          if (!selectedWebsite || selectedWebsite.id !== preferredWebsite.id) {
+            setSelectedWebsite(preferredWebsite);
+          }
+        }
       } else {
         setWebsites([]);
         setAvailableScrapers(["tribune", "dawn", "geo", "ary", "express"]);
@@ -363,7 +384,7 @@ export function WebPaperCrawlerPanel({
     } finally {
       setLoading(false);
     }
-  }, [loadArticles, loadLogs]);
+  }, [isBrandingOnly, loadArticles, loadLogs, selectedWebsite]);
 
   useEffect(() => {
     void refreshAll();
@@ -396,6 +417,18 @@ export function WebPaperCrawlerPanel({
       });
     });
   }, [brandingFilters, loadBrandingResults, selectedWebsite]);
+
+  useEffect(() => {
+    if (!isBrandingOnly) return;
+    if (selectedWebsite || websites.length === 0) return;
+    setSelectedWebsite(websites[0]);
+  }, [isBrandingOnly, selectedWebsite, websites]);
+
+  useEffect(() => {
+    if (!isBrandingOnly || !selectedWebsite) return;
+    setWebsiteWorkspaceTab("branding");
+    void loadWebsiteWorkspaceArticles(selectedWebsite.id).catch(() => {});
+  }, [isBrandingOnly, loadWebsiteWorkspaceArticles, selectedWebsite]);
 
   useEffect(() => {
     if (!selectedWebsite || !brandingScanStatus || !["queued", "running", "stopping"].includes(brandingScanStatus.status)) return;
@@ -491,7 +524,9 @@ export function WebPaperCrawlerPanel({
   async function handleRunBrandingScan() {
     if (!selectedWebsite) return;
     await runBrandingAction("run-branding-scan", async () => {
+      const urls = extractBrandingScanUrls(websiteWorkspaceArticles);
       const response = await startNewsBrandingScan(selectedWebsite.id, {
+        urls: urls.length > 0 ? urls : undefined,
         device_types: brandingScanDeviceTypes,
         capture_full_page: true,
         capture_ad_elements: true,
@@ -507,7 +542,18 @@ export function WebPaperCrawlerPanel({
     setSelectedWebsite(website);
     setWebsiteWorkspaceTab("branding");
     await runBrandingAction(`run-branding-scan-${website.id}`, async () => {
+      let urls = extractBrandingScanUrls(website.id === selectedWebsite?.id ? websiteWorkspaceArticles : []);
+      if (urls.length === 0) {
+        const response = await getWebPaperArticles({
+          page: 1,
+          limit: Math.min(brandingScheduleDraft.max_urls_per_scan, 50),
+          websiteId: website.id,
+        });
+        urls = extractBrandingScanUrls(response.items);
+        setWebsiteWorkspaceArticles(response.items);
+      }
       const response = await startNewsBrandingScan(website.id, {
+        urls: urls.length > 0 ? urls : undefined,
         device_types: brandingScanDeviceTypes,
         capture_full_page: true,
         capture_ad_elements: true,

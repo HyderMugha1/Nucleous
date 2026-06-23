@@ -473,6 +473,9 @@ async function discoverArticleUrlsFromHomepage(baseUrl, maxUrls = 12) {
 async function collectCandidates(page) {
   return page.evaluate(({ selectors, labels }) => {
     const MAX_TEXT_LENGTH = 900;
+    const MIN_DOM_SCORE = 4.5;
+    const MIN_TEXT_SCORE = 3;
+    const STRUCTURAL_TAGS = new Set(["html", "body", "main", "header", "footer", "nav", "article"]);
 
     function buildCssPath(node) {
       if (!node || !(node instanceof Element)) return "";
@@ -503,6 +506,30 @@ async function collectCandidates(page) {
       return Boolean(computed.backgroundImage && computed.backgroundImage !== "none");
     }
 
+    function hasAdInfrastructure(element) {
+      if (!(element instanceof Element)) return false;
+      if (/^(iframe|amp-ad|ins)$/i.test(element.tagName)) return true;
+      if (element.matches("ins.adsbygoogle, amp-ad, iframe[id^='google_ads_iframe'], iframe[src*='doubleclick'], iframe[src*='googlesyndication'], iframe[src*='adservice'], iframe[src*='taboola'], iframe[src*='outbrain']")) {
+        return true;
+      }
+      return Boolean(
+        element.querySelector(
+          "iframe[id^='google_ads_iframe'], iframe[src*='doubleclick'], iframe[src*='googlesyndication'], iframe[src*='adservice'], iframe[src*='taboola'], iframe[src*='outbrain'], ins.adsbygoogle, amp-ad, [data-ad], [data-ad-slot], [data-ad-client], [data-ad-wrapper], [data-google-query-id]",
+        ),
+      );
+    }
+
+    function hasSponsoredLabelNearby(element) {
+      if (!(element instanceof Element)) return false;
+      const nearbyText = [
+        element.textContent || "",
+        element.previousElementSibling?.textContent || "",
+        element.nextElementSibling?.textContent || "",
+        element.parentElement?.textContent || "",
+      ].join(" ");
+      return /advertisement|advert|sponsored|sponsored content|promoted|partner content|paid content|presented by|in partnership with/i.test(nearbyText);
+    }
+
     function looksAdLike(element) {
       if (!(element instanceof Element)) return false;
       const haystack = [
@@ -515,6 +542,18 @@ async function collectCandidates(page) {
         element.tagName || "",
       ].join(" ").toLowerCase();
       return /(advert|sponsor|promo|adsbygoogle|doubleclick|googlesyndication|outbrain|taboola|\bad\b|adslot|ad-slot|dfp|banner)/i.test(haystack);
+    }
+
+    function isStructuralContainer(element) {
+      if (!(element instanceof Element)) return false;
+      const tagName = element.tagName.toLowerCase();
+      if (STRUCTURAL_TAGS.has(tagName)) return true;
+      const className = String(element.className || "").toLowerCase();
+      const id = String(element.id || "").toLowerCase();
+      if (/story__|template__|mainheader|article-body|content-wrapper|container/.test(`${className} ${id}`) && !looksAdLike(element)) {
+        return true;
+      }
+      return false;
     }
 
     function scoreElement(element, originRect = null) {
@@ -588,15 +627,27 @@ async function collectCandidates(page) {
 
     function extractCandidate(element, selector, sourceType) {
       if (!(element instanceof Element)) return null;
+      if (isStructuralContainer(element)) return null;
       const rect = element.getBoundingClientRect();
       if (rect.width < 80 || rect.height < 40) return null;
       const text = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ");
       if (text.length > MAX_TEXT_LENGTH && !hasVisualMedia(element)) return null;
+      const adInfrastructure = hasAdInfrastructure(element);
+      const sponsoredLabel = hasSponsoredLabelNearby(element);
+      if (sourceType === "dom" && !adInfrastructure && !sponsoredLabel && !looksAdLike(element)) {
+        return null;
+      }
+      if (sourceType === "dom" && !adInfrastructure && hasVisualMedia(element) && !sponsoredLabel) {
+        return null;
+      }
+      const score = scoreElement(element);
+      if (score < (sourceType === "text" ? MIN_TEXT_SCORE : MIN_DOM_SCORE)) return null;
       const iframeSrc = element.tagName.toLowerCase() === "iframe" ? element.getAttribute("src") || "" : "";
       const img = element.querySelector("img");
       return {
         selector,
         sourceType,
+        score,
         cssPath: buildCssPath(element),
         elementText: text.slice(0, 500),
         boundingBox: {
@@ -612,6 +663,9 @@ async function collectCandidates(page) {
           altText: img?.getAttribute("alt") || "",
           ariaLabel: element.getAttribute("aria-label") || "",
           classes: element.className || "",
+          score,
+          adInfrastructure,
+          sponsoredLabel,
         },
       };
     }
