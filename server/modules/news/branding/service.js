@@ -14,21 +14,35 @@ const BRANDING_SELECTORS = [
   '[id*="ad"]',
   '[class*="ad"]',
   '[class*="ads"]',
+  '[class*="ad-"]',
+  '[class*="-ad"]',
+  '[class*="adslot"]',
+  '[class*="ad-slot"]',
   '[class*="advert"]',
   '[class*="advertisement"]',
   '[class*="sponsor"]',
   '[class*="sponsored"]',
   '[class*="brand"]',
   '[class*="promo"]',
+  '[class*="banner-ad"]',
+  '[class*="google-ad"]',
+  '[class*="dfp"]',
   "[data-ad]",
   "[data-ad-slot]",
   "[data-ad-client]",
+  "[data-ad-wrapper]",
+  "[data-google-query-id]",
   '[data-testid*="ad"]',
+  '[aria-label*="advert"]',
+  '[aria-label*="sponsor"]',
+  "ins.adsbygoogle",
+  'iframe[id^="google_ads_iframe"]',
   'iframe[src*="doubleclick"]',
   'iframe[src*="googlesyndication"]',
   'iframe[src*="adservice"]',
   'iframe[src*="taboola"]',
   'iframe[src*="outbrain"]',
+  "amp-ad",
 ];
 const BRANDING_TEXT_LABELS = [
   "Advertisement",
@@ -88,6 +102,21 @@ function cleanVisibleText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
+}
+
+function isProbablyArticleUrl(urlString, websiteBaseUrl) {
+  try {
+    const url = new URL(urlString, websiteBaseUrl);
+    const baseUrl = new URL(websiteBaseUrl);
+    if (url.hostname !== baseUrl.hostname) return false;
+    const path = url.pathname.toLowerCase();
+    if (!path || path === "/" || path.length < 8) return false;
+    if (/\.(jpg|jpeg|png|gif|webp|svg|pdf|mp4|mov|avi|css|js|xml)$/i.test(path)) return false;
+    if (/\/(tag|tags|topic|topics|author|authors|search|privacy|about|contact|video|videos|opinion|gallery)\b/.test(path)) return false;
+    return path.split("/").filter(Boolean).length >= 2;
+  } catch {
+    return false;
+  }
 }
 
 function hashBuffer(buffer) {
@@ -390,8 +419,48 @@ async function dismissCookieBanners(page) {
   }
 }
 
+async function discoverArticleUrlsFromHomepage(baseUrl, maxUrls = 12) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch(baseUrl, {
+      headers: {
+        "user-agent": getBrandingUserAgent(),
+        accept: "text/html,application/xhtml+xml",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const hrefMatches = Array.from(html.matchAll(/href\s*=\s*["']([^"'#]+)["']/gi));
+    const discovered = [];
+    const seen = new Set();
+    for (const match of hrefMatches) {
+      const href = match[1];
+      if (!href) continue;
+      let absoluteUrl = null;
+      try {
+        absoluteUrl = new URL(href, baseUrl).toString();
+      } catch {
+        continue;
+      }
+      if (!isProbablyArticleUrl(absoluteUrl, baseUrl) || seen.has(absoluteUrl)) continue;
+      seen.add(absoluteUrl);
+      discovered.push(absoluteUrl);
+      if (discovered.length >= maxUrls) break;
+    }
+    return discovered;
+  } catch {
+    return [];
+  }
+}
+
 async function collectCandidates(page) {
   return page.evaluate(({ selectors, labels }) => {
+    const MAX_TEXT_LENGTH = 900;
+
     function buildCssPath(node) {
       if (!node || !(node instanceof Element)) return "";
       if (node.id) return `#${node.id}`;
@@ -412,11 +481,104 @@ async function collectCandidates(page) {
       return parts.join(" > ");
     }
 
+    function hasVisualMedia(element) {
+      if (!(element instanceof Element)) return false;
+      if (/^(iframe|img|ins|video|amp-ad|canvas)$/i.test(element.tagName)) return true;
+      if (element.matches("ins.adsbygoogle, amp-ad")) return true;
+      if (element.querySelector("iframe, img, ins.adsbygoogle, video, amp-ad, canvas")) return true;
+      const computed = window.getComputedStyle(element);
+      return Boolean(computed.backgroundImage && computed.backgroundImage !== "none");
+    }
+
+    function looksAdLike(element) {
+      if (!(element instanceof Element)) return false;
+      const haystack = [
+        element.id || "",
+        element.className || "",
+        element.getAttribute("data-ad") || "",
+        element.getAttribute("data-ad-slot") || "",
+        element.getAttribute("data-testid") || "",
+        element.getAttribute("aria-label") || "",
+        element.tagName || "",
+      ].join(" ").toLowerCase();
+      return /(advert|sponsor|promo|adsbygoogle|doubleclick|googlesyndication|outbrain|taboola|\bad\b|adslot|ad-slot|dfp|banner)/i.test(haystack);
+    }
+
+    function scoreElement(element, originRect = null) {
+      if (!(element instanceof Element)) return -1;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 80 || rect.height < 40) return -1;
+      const text = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ");
+      if (text.length > MAX_TEXT_LENGTH && !hasVisualMedia(element)) return -1;
+
+      let score = 0;
+      if (hasVisualMedia(element)) score += 4;
+      if (looksAdLike(element)) score += 4;
+      if (text.length > 0 && text.length <= 180) score += 1.5;
+      if (rect.width >= 220 && rect.height >= 120) score += 1.5;
+      if (rect.width >= window.innerWidth * 0.2) score += 0.5;
+      if (rect.height <= window.innerHeight * 0.6) score += 0.5;
+      if (originRect) {
+        const dx = Math.abs((rect.x + rect.width / 2) - (originRect.x + originRect.width / 2));
+        const dy = Math.abs((rect.y + rect.height / 2) - (originRect.y + originRect.height / 2));
+        const distancePenalty = Math.min(4, (dx + dy) / 300);
+        score -= distancePenalty;
+      }
+      return score;
+    }
+
+    function pickBestElement(elements, originRect = null) {
+      let best = null;
+      let bestScore = -1;
+      for (const element of elements) {
+        const score = scoreElement(element, originRect);
+        if (score > bestScore) {
+          best = element;
+          bestScore = score;
+        }
+      }
+      return bestScore >= 1 ? best : null;
+    }
+
+    function gatherNearbyAdCandidates(host, originRect = null) {
+      if (!(host instanceof Element)) return [];
+      const candidates = new Set();
+      const add = (element) => {
+        if (element instanceof Element) candidates.add(element);
+      };
+
+      add(host);
+      add(host.closest("section,article,aside,div,li,figure,iframe"));
+      add(host.parentElement);
+      add(host.previousElementSibling);
+      add(host.nextElementSibling);
+
+      const parent = host.parentElement;
+      if (parent) {
+        for (const sibling of Array.from(parent.children).slice(0, 12)) {
+          add(sibling);
+          if (sibling instanceof Element) {
+            sibling
+              .querySelectorAll("iframe, img, ins.adsbygoogle, amp-ad, [data-ad], [data-ad-slot], [class*='ad'], [class*='advert'], [class*='sponsor'], [class*='promo']")
+              .forEach((element) => add(element.closest("section,article,aside,div,li,figure,iframe") || element));
+          }
+        }
+      }
+
+      host
+        .querySelectorAll("iframe, img, ins.adsbygoogle, amp-ad, [data-ad], [data-ad-slot], [class*='ad'], [class*='advert'], [class*='sponsor'], [class*='promo']")
+        .forEach((element) => add(element.closest("section,article,aside,div,li,figure,iframe") || element));
+
+      const chosen = pickBestElement(Array.from(candidates), originRect);
+      return chosen ? [chosen] : [];
+    }
+
     function extractCandidate(element, selector, sourceType) {
       if (!(element instanceof Element)) return null;
       const rect = element.getBoundingClientRect();
       if (rect.width < 80 || rect.height < 40) return null;
       const text = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ");
+      if (text.length > MAX_TEXT_LENGTH && !hasVisualMedia(element)) return null;
       const iframeSrc = element.tagName.toLowerCase() === "iframe" ? element.getAttribute("src") || "" : "";
       const img = element.querySelector("img");
       return {
@@ -461,13 +623,16 @@ async function collectCandidates(page) {
       const node = treeWalker.currentNode;
       const rawText = String(node.textContent || "").trim();
       if (!rawText || !labelRegex.test(rawText)) continue;
-      const host = node.parentElement?.closest("section,article,aside,div,li,figure,iframe");
-      if (!host) continue;
-      const key = buildCssPath(host);
-      if (!key || textSeen.has(key)) continue;
-      textSeen.add(key);
-      const candidate = extractCandidate(host, `text:${rawText.slice(0, 60)}`, "text");
-      if (candidate) results.push(candidate);
+      const seed = node.parentElement?.closest("section,article,aside,div,li,figure,iframe");
+      const originRect = seed instanceof Element ? seed.getBoundingClientRect() : null;
+      const hosts = seed ? gatherNearbyAdCandidates(seed, originRect) : [];
+      for (const host of hosts) {
+        const key = buildCssPath(host);
+        if (!key || textSeen.has(key)) continue;
+        textSeen.add(key);
+        const candidate = extractCandidate(host, `text:${rawText.slice(0, 60)}`, "text");
+        if (candidate) results.push(candidate);
+      }
     }
 
     return {
@@ -542,7 +707,15 @@ async function listCandidateUrlsForWebsite(organizationId, websiteId, providedUr
     .limit(Math.max(10, maxUrlsPerScan - 1));
   if (error) throw new Error(error.message);
 
-  return normalizeUrls([website.base_url, ...(data || []).map((item) => item.url)], website.base_url).slice(0, maxUrlsPerScan);
+  const homepageDiscoveries = await discoverArticleUrlsFromHomepage(
+    website.base_url,
+    Math.max(6, Math.min(15, maxUrlsPerScan - 1)),
+  );
+
+  return normalizeUrls(
+    [website.base_url, ...homepageDiscoveries, ...(data || []).map((item) => item.url)],
+    website.base_url,
+  ).slice(0, maxUrlsPerScan);
 }
 
 function mapScanStatus(scan) {
