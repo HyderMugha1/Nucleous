@@ -179,6 +179,17 @@ function normalizeUrls(urls = [], baseUrl) {
   return Array.from(unique).slice(0, MAX_URLS_PER_SCAN);
 }
 
+function collectArticleUrlFields(items = []) {
+  const urls = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    if (item.canonical_url) urls.push(item.canonical_url);
+    if (item.normalized_url) urls.push(item.normalized_url);
+    if (item.url) urls.push(item.url);
+  }
+  return urls;
+}
+
 function inferPlacement(box, viewport, pageMetrics = {}) {
   const { x, y, width, height } = roundBox(box);
   const pageHeight = Number(pageMetrics.pageHeight || viewport.height);
@@ -755,20 +766,23 @@ async function listCandidateUrlsForWebsite(organizationId, websiteId, providedUr
 
   const { data, error } = await supabaseAdmin
     .from("web_paper_articles")
-    .select("url")
+    .select("url, canonical_url, normalized_url")
     .eq("organization_id", organizationId)
     .eq("website_id", websiteId)
     .order("published_at", { ascending: false })
-    .limit(Math.max(10, maxUrlsPerScan - 1));
+    .order("fetched_at", { ascending: false })
+    .limit(Math.max(25, maxUrlsPerScan));
   if (error) throw new Error(error.message);
 
-  const homepageDiscoveries = await discoverArticleUrlsFromHomepage(
-    website.base_url,
-    Math.max(6, Math.min(15, maxUrlsPerScan - 1)),
-  );
+  const storedArticleUrls = normalizeUrls(collectArticleUrlFields(data || []), website.base_url).slice(0, maxUrlsPerScan);
+  if (storedArticleUrls.length >= maxUrlsPerScan) {
+    return storedArticleUrls;
+  }
+
+  const homepageDiscoveries = await discoverArticleUrlsFromHomepage(website.base_url, Math.max(6, maxUrlsPerScan - storedArticleUrls.length));
 
   return normalizeUrls(
-    [website.base_url, ...homepageDiscoveries, ...(data || []).map((item) => item.url)],
+    [...storedArticleUrls, website.base_url, ...homepageDiscoveries],
     website.base_url,
   ).slice(0, maxUrlsPerScan);
 }
@@ -989,6 +1003,8 @@ export async function startBrandingScan({ organizationId, newsWebsiteId, payload
     metadata: {
       websiteName: website.name,
       baseUrl: website.base_url,
+      urlSource: payload.urls?.length ? "manual" : "stored_articles",
+      selectedUrlCount: urls.length,
     },
   };
 
