@@ -10,6 +10,8 @@ const BRANDING_BUCKET_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const MIN_ELEMENT_WIDTH = 80;
 const MIN_ELEMENT_HEIGHT = 40;
 const MAX_URLS_PER_SCAN = 50;
+const STALE_QUEUED_SCAN_MINUTES = 10;
+const STALE_RUNNING_SCAN_MINUTES = 60;
 const BRANDING_SELECTORS = [
   '[id*="ad"]',
   '[class*="ad"]',
@@ -690,6 +692,59 @@ async function getScanById(organizationId, scanId) {
   return data;
 }
 
+function getMinutesSince(timestamp) {
+  const parsed = new Date(timestamp || "");
+  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+  return (Date.now() - parsed.getTime()) / (1000 * 60);
+}
+
+function isScanStale(scan) {
+  const status = String(scan?.status || "");
+  if (!["queued", "running", "stopping"].includes(status)) return false;
+
+  const minutesSinceUpdate = getMinutesSince(scan?.updated_at || scan?.created_at || scan?.started_at);
+  if (status === "queued") {
+    return minutesSinceUpdate >= STALE_QUEUED_SCAN_MINUTES;
+  }
+
+  if (runningScanIds.has(scan.id)) {
+    return false;
+  }
+
+  return minutesSinceUpdate >= STALE_RUNNING_SCAN_MINUTES;
+}
+
+async function releaseStaleActiveScans(organizationId, newsWebsiteId) {
+  const { data, error } = await supabaseAdmin
+    .from("branding_scans")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("news_website_id", newsWebsiteId)
+    .in("status", ["queued", "running", "stopping"])
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+
+  for (const scan of data || []) {
+    if (!isScanStale(scan)) continue;
+    const staleStatus = scan.status === "queued" ? "stopped" : "failed";
+    const staleMessage = scan.status === "queued"
+      ? "Queued branding scan expired before processing."
+      : "Branding scan was marked stale and automatically released.";
+    await updateScan(scan.id, {
+      status: staleStatus,
+      completed_at: new Date().toISOString(),
+      error_message: staleMessage,
+      metadata: {
+        ...(scan.metadata || {}),
+        stale_recovery: {
+          previous_status: scan.status,
+          recovered_at: new Date().toISOString(),
+        },
+      },
+    });
+  }
+}
+
 async function listCandidateUrlsForWebsite(organizationId, websiteId, providedUrls = [], maxUrlsPerScan = MAX_URLS_PER_SCAN) {
   const website = await getWebsiteById(organizationId, websiteId);
   if (!website) throw new Error("News website not found");
@@ -895,6 +950,8 @@ export async function startBrandingScan({ organizationId, newsWebsiteId, payload
   ensureAdminClient();
   const website = await getWebsiteById(organizationId, newsWebsiteId);
   if (!website) throw new Error("News website not found");
+
+  await releaseStaleActiveScans(organizationId, newsWebsiteId);
 
   const deviceTypes = normalizeDeviceTypes(payload.device_types || ["desktop"]);
   const urls = await listCandidateUrlsForWebsite(
