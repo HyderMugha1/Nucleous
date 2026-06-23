@@ -85,6 +85,7 @@ export const config = {
   brandingMonitorEnabled: process.env.BRANDING_MONITOR_ENABLED || "true",
   brandingMonitorBucket: process.env.SUPABASE_BRANDING_BUCKET || "branding-monitor",
   brandingMonitorContactEmail: process.env.BRANDING_MONITOR_CONTACT_EMAIL || "contact@example.com",
+  brandingMonitorInlineUrlLimit: Number(process.env.BRANDING_MONITOR_INLINE_URL_LIMIT || 3),
 };
 
 async function validateResolvableHostname(label, rawUrl) {

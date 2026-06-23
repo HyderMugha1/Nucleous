@@ -143,7 +143,7 @@ const defaultBrandingScheduleDraft = {
   frequency: "daily" as "daily" | "weekly" | "monthly",
   time: "09:00",
   device_types: ["desktop"] as string[],
-  max_urls_per_scan: 25,
+  max_urls_per_scan: 3,
   capture_full_page: true,
   capture_ad_elements: true,
   use_ai_classification: true,

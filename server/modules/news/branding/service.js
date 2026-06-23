@@ -165,6 +165,10 @@ function normalizeDeviceTypes(deviceTypes = []) {
   return normalized.length > 0 ? normalized : ["desktop"];
 }
 
+function shouldRunBrandingScanInline() {
+  return Boolean(process.env.VERCEL || config.isProduction);
+}
+
 function normalizeUrls(urls = [], baseUrl) {
   const unique = new Set();
   for (const rawUrl of urls) {
@@ -1022,11 +1026,19 @@ export async function startBrandingScan({ organizationId, newsWebsiteId, payload
   await releaseStaleActiveScans(organizationId, newsWebsiteId);
 
   const deviceTypes = normalizeDeviceTypes(payload.device_types || ["desktop"]);
+  const inlineExecution = shouldRunBrandingScanInline();
+  const requestedMaxUrls = Number(payload.max_urls_per_scan || MAX_URLS_PER_SCAN);
+  const effectiveMaxUrls = inlineExecution
+    ? Math.min(
+        Math.max(1, Number(config.brandingMonitorInlineUrlLimit || 3)),
+        Math.max(1, requestedMaxUrls || MAX_URLS_PER_SCAN),
+      )
+    : requestedMaxUrls;
   const urls = await listCandidateUrlsForWebsite(
     organizationId,
     newsWebsiteId,
     payload.urls || [],
-    Number(payload.max_urls_per_scan || MAX_URLS_PER_SCAN),
+    effectiveMaxUrls,
   );
 
   const { data: activeScans, error: activeScanError } = await supabaseAdmin
@@ -1059,11 +1071,22 @@ export async function startBrandingScan({ organizationId, newsWebsiteId, payload
       baseUrl: website.base_url,
       urlSource: payload.urls?.length ? "manual" : "stored_articles",
       selectedUrlCount: urls.length,
+      executionMode: inlineExecution ? "inline" : "background",
     },
   };
 
   const { data, error } = await supabaseAdmin.from("branding_scans").insert(insertPayload).select("*").single();
   if (error || !data) throw new Error(error?.message || "Unable to start branding scan");
+
+  if (inlineExecution) {
+    try {
+      await runBrandingScan(organizationId, data.id);
+    } catch (scanError) {
+      console.error(`Branding scan failed for website ${newsWebsiteId}`, scanError);
+    }
+    const freshScan = await getScanById(organizationId, data.id);
+    return mapScanStatus(freshScan || data);
+  }
 
   void runBrandingScan(organizationId, data.id).catch((scanError) => {
     console.error(`Branding scan failed for website ${newsWebsiteId}`, scanError);
