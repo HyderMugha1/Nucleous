@@ -503,6 +503,23 @@ export function WebPaperCrawlerPanel({
     }, "Branding scan queued");
   }
 
+  async function handleRunBrandingScanForWebsite(website: WebPaperWebsiteRecord) {
+    setSelectedWebsite(website);
+    setWebsiteWorkspaceTab("branding");
+    await runBrandingAction(`run-branding-scan-${website.id}`, async () => {
+      const response = await startNewsBrandingScan(website.id, {
+        device_types: brandingScanDeviceTypes,
+        capture_full_page: true,
+        capture_ad_elements: true,
+        use_ai_classification: true,
+        max_urls_per_scan: brandingScheduleDraft.max_urls_per_scan,
+      });
+      setBrandingScanStatus(response.item);
+      setBrandingScans((current) => [response.item, ...current]);
+      await loadBrandingResults(website.id, 1);
+    }, `${website.name} branding bot started`);
+  }
+
   async function handleStopBrandingScan() {
     if (!selectedWebsite || !brandingScanStatus) return;
     await runBrandingAction("stop-branding-scan", async () => {
@@ -628,9 +645,15 @@ export function WebPaperCrawlerPanel({
                       <Badge variant="outline">{website.crawl_interval_minutes} min</Badge>
                     </div>
                   </div>
-                  <Button onClick={() => void openWebsiteWorkspace(website)}>
-                    Open Branding
-                  </Button>
+                  <div className="flex flex-col gap-2">
+                    <Button onClick={() => void handleRunBrandingScanForWebsite(website)} disabled={brandingBusyAction !== null}>
+                      <Play className="mr-2 h-4 w-4" />
+                      Send Bot
+                    </Button>
+                    <Button variant="outline" onClick={() => void openWebsiteWorkspace(website)}>
+                      Open Branding
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                   <div className="rounded-xl border border-border/20 px-4 py-3">
@@ -1243,7 +1266,7 @@ export function WebPaperCrawlerPanel({
                     <div className="flex flex-wrap gap-2">
                       <Button onClick={() => void handleRunBrandingScan()} disabled={brandingBusyAction !== null}>
                         <Play className="mr-2 h-4 w-4" />
-                        Run Branding Scan
+                        Send Bot for Screenshots
                       </Button>
                       <Button
                         variant="outline"
