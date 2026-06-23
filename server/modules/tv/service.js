@@ -1,9 +1,15 @@
 import { supabaseAdmin } from "../../supabase.js";
 import { buildSrt } from "./srt.js";
-import { transcribeVideoWithApify } from "./apify.js";
+import { transcribeVideoWithApifyLanguage } from "./apify.js";
 import { normalizeSearchableText, buildYouTubeRedirect } from "./utils.js";
 import { fetchAllChannelVideos, fetchChannelMetadata } from "./youtube.js";
 import { config } from "../../config.js";
+import {
+  mapOutputLanguageLabel,
+  normalizeTranscriptOutputLanguage,
+  translateSegments,
+  transliterateSegmentsToRomanUrdu,
+} from "./translation.js";
 import {
   buildTikTokAuthUrl,
   createTikTokState,
@@ -426,23 +432,15 @@ export async function listTvVideos({
   status = "all",
 }) {
   ensureAdminClient();
-  const skip = (page - 1) * limit;
   let query = supabaseAdmin
     .from("tv_youtube_videos")
     .select("*, tv_youtube_channels(id, channel_name, thumbnail_url)", { count: "exact" })
     .eq("organization_id", organizationId)
     .order("published_at", { ascending: false })
-    .range(skip, skip + limit - 1);
+    .range(0, Math.max(limit * page, limit) - 1);
 
   if (channelId) query = query.eq("channel_id", channelId);
   if (search) query = query.or(`title.ilike.%${search}%,youtube_video_id.ilike.%${search}%`);
-  if (status === "transcribed") {
-    query = query.not("transcript_text", "is", null);
-  } else if (status === "non_transcribed") {
-    query = query.in("processing_status", ["pending", "failed"]).is("transcript_text", null);
-  } else if (status === "processing") {
-    query = query.in("processing_status", ["queued", "processing"]).is("transcript_text", null);
-  }
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
@@ -483,8 +481,7 @@ export async function listTvVideos({
     }
   }
 
-  return {
-    items: items.map((item) => {
+  const enrichedItems = items.map((item) => {
       const latestLog = latestLogs.get(item.id);
       const transcriptPreview = item.transcript_text
         ? String(item.transcript_text).replace(/\s+/g, " ").trim().slice(0, 280)
@@ -500,8 +497,30 @@ export async function listTvVideos({
         latest_job_status: latestLog?.job_status || null,
         latest_job_error: latestLog?.error_message || null,
       };
-    }),
-    total: count || 0,
+    });
+
+  const filteredItems = enrichedItems.filter((item) => {
+    if (status === "transcribed") {
+      return item.processing_status === "completed";
+    }
+
+    if (status === "non_transcribed") {
+      return ["pending", "failed"].includes(item.processing_status);
+    }
+
+    if (status === "processing") {
+      return ["queued", "processing"].includes(item.processing_status);
+    }
+
+    return true;
+  });
+
+  const skip = (page - 1) * limit;
+
+  return {
+    items: filteredItems.slice(skip, skip + limit),
+    total: filteredItems.length,
+    unfilteredTotal: count || 0,
   };
 }
 
@@ -512,8 +531,10 @@ export async function processVideoTranscription({
   processingLogId = null,
   jobType = "video_transcription",
   trigger = "manual",
+  outputLanguage = "original",
 }) {
   ensureAdminClient();
+  const normalizedOutputLanguage = normalizeTranscriptOutputLanguage(outputLanguage);
 
   const { data: video, error: videoError } = await supabaseAdmin
     .from("tv_youtube_videos")
@@ -544,7 +565,7 @@ export async function processVideoTranscription({
           job_type: jobType,
           job_status: "processing",
           provider: "apify",
-          payload: { trigger },
+          payload: { trigger, outputLanguage: normalizedOutputLanguage },
           attempts: 1,
         })
         .select("id")
@@ -555,8 +576,33 @@ export async function processVideoTranscription({
       }
     }
 
-    const transcript = await transcribeVideoWithApify(video.youtube_url);
-    const normalizedSegments = transcript.segments.map((segment) => ({
+    let transcript = await transcribeVideoWithApifyLanguage(
+      video.youtube_url,
+      normalizedOutputLanguage === "english"
+        ? "en"
+        : normalizedOutputLanguage === "urdu" || normalizedOutputLanguage === "roman_urdu"
+          ? "ur"
+          : null,
+    );
+
+    let outputSegments = transcript.segments;
+    let outputLanguageLabel = transcript.language || "unknown";
+
+    if (normalizedOutputLanguage === "english" && !/^en/i.test(String(transcript.language || ""))) {
+      outputSegments = await translateSegments(outputSegments, "en");
+      outputLanguageLabel = "english";
+    } else if (normalizedOutputLanguage === "urdu" && !/^ur/i.test(String(transcript.language || ""))) {
+      outputSegments = await translateSegments(outputSegments, "ur");
+      outputLanguageLabel = "urdu";
+    } else if (normalizedOutputLanguage === "roman_urdu") {
+      const urduSegments = /^ur/i.test(String(transcript.language || ""))
+        ? outputSegments
+        : await translateSegments(outputSegments, "ur");
+      outputSegments = transliterateSegmentsToRomanUrdu(urduSegments);
+      outputLanguageLabel = "roman-urdu";
+    }
+
+    const normalizedSegments = outputSegments.map((segment) => ({
       organization_id: organizationId,
       video_id: video.id,
       segment_index: segment.segment_index,
@@ -584,7 +630,7 @@ export async function processVideoTranscription({
       .from("tv_youtube_videos")
       .update({
         transcript_text: transcriptText,
-        transcript_language: transcript.language,
+        transcript_language: outputLanguageLabel,
         processing_status: generateSrt ? "processing" : "completed",
         last_processed_at: new Date().toISOString(),
         transcript_version: (video.transcript_version || 0) + 1,
@@ -608,6 +654,8 @@ export async function processVideoTranscription({
             segmentCount: normalizedSegments.length,
             generatedSrt: generateSrt,
             actorId: config.tvTranscriptionActorId,
+            outputLanguage: normalizedOutputLanguage,
+            outputLanguageLabel: mapOutputLanguageLabel(normalizedOutputLanguage),
           },
           updated_at: new Date().toISOString(),
         })

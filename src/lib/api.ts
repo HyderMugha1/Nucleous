@@ -375,6 +375,7 @@ export interface TVYouTubeVideoRecord {
 }
 
 export type TVYouTubeVideoFilterStatus = "all" | "transcribed" | "non_transcribed" | "processing";
+export type TVTranscriptOutputLanguage = "original" | "english" | "urdu" | "roman_urdu";
 
 export interface TVDashboardSummary {
   channels: number;
@@ -1963,6 +1964,14 @@ export async function getTVYouTubeVideos(params?: {
 export async function processTVYouTubeVideo(videoId: string) {
   return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/process`, {
     method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function processTVYouTubeVideoInLanguage(videoId: string, outputLanguage: TVTranscriptOutputLanguage) {
+  return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/process`, {
+    method: "POST",
+    body: JSON.stringify({ outputLanguage }),
   });
 }
 
@@ -1975,6 +1984,14 @@ export async function generateTVVideoSrt(videoId: string) {
 export async function retryTVVideoProcessing(videoId: string) {
   return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/retry`, {
     method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function retryTVVideoProcessingInLanguage(videoId: string, outputLanguage: TVTranscriptOutputLanguage) {
+  return request<{ queued: boolean; item?: { videoId: string; segmentCount: number } }>(`/tv/videos/${videoId}/retry`, {
+    method: "POST",
+    body: JSON.stringify({ outputLanguage }),
   });
 }
 

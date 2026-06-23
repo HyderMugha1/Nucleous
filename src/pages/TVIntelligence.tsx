@@ -13,8 +13,8 @@ import {
   getTVTikTokVideos,
   getTVYouTubeChannels,
   getTVYouTubeVideos,
-  processTVYouTubeVideo,
-  retryTVVideoProcessing,
+  processTVYouTubeVideoInLanguage,
+  retryTVVideoProcessingInLanguage,
   searchTVTranscripts,
   syncTVTikTokAccount,
   syncTVTikTokPublicSource,
@@ -25,6 +25,7 @@ import {
   type TVTikTokPublicPostRecord,
   type TVTikTokPublicSourceRecord,
   type TVTikTokVideoRecord,
+  type TVTranscriptOutputLanguage,
   type TVTranscriptSearchRecord,
   type TVYouTubeChannelRecord,
   type TVYouTubeVideoFilterStatus,
@@ -122,7 +123,13 @@ const EMPTY_SUMMARY: TVDashboardSummary = {
   latestChannelSyncAt: null,
 };
 
-const VIDEO_PAGE_SIZE = 24;
+const VIDEO_FETCH_LIMIT = 5000;
+const TRANSCRIPT_LANGUAGE_OPTIONS: Array<{ key: TVTranscriptOutputLanguage; label: string }> = [
+  { key: "original", label: "Original" },
+  { key: "english", label: "English" },
+  { key: "urdu", label: "Urdu" },
+  { key: "roman_urdu", label: "Roman Urdu" },
+];
 
 export default function TVIntelligence() {
   const [integrationStatus, setIntegrationStatus] = useState<{
@@ -150,8 +157,7 @@ export default function TVIntelligence() {
   const [videoSearch, setVideoSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<string>("All");
   const [videoStatusFilter, setVideoStatusFilter] = useState<TVYouTubeVideoFilterStatus>("all");
-  const [videoPage, setVideoPage] = useState(1);
-  const [videoPagination, setVideoPagination] = useState({ page: 1, limit: VIDEO_PAGE_SIZE, total: 0, pages: 1 });
+  const [transcriptOutputLanguage, setTranscriptOutputLanguage] = useState<TVTranscriptOutputLanguage>("original");
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
@@ -181,8 +187,8 @@ export default function TVIntelligence() {
         getTVDashboard(),
         getTVYouTubeChannels(),
         getTVYouTubeVideos({
-          limit: VIDEO_PAGE_SIZE,
-          page: videoPage,
+          limit: VIDEO_FETCH_LIMIT,
+          page: 1,
           status: videoStatusFilter,
           search: deferredVideoSearch.trim() || undefined,
           channelId: selectedChannel?.id,
@@ -212,7 +218,6 @@ export default function TVIntelligence() {
       setRecentTranscripts(dashboardResponse.recentTranscripts);
       setYoutubeChannels(channelsResponse.items);
       setYoutubeVideos(videosResponse.items);
-      setVideoPagination(videosResponse.pagination);
 
       if (tiktokAccountsResult.status === "fulfilled") {
         setTiktokAccounts(tiktokAccountsResult.value.items);
@@ -258,7 +263,7 @@ export default function TVIntelligence() {
         setLoading(false);
       }
     }
-  }, [channelFilter, deferredVideoSearch, videoPage, videoStatusFilter, youtubeChannels]);
+  }, [channelFilter, deferredVideoSearch, videoStatusFilter, youtubeChannels]);
 
   useEffect(() => {
     void loadTvPage({ withGlobalLoader: true });
@@ -268,10 +273,6 @@ export default function TVIntelligence() {
     if (loading) return;
     void loadTvPage();
   }, [loadTvPage, loading]);
-
-  useEffect(() => {
-    setVideoPage(1);
-  }, [channelFilter, deferredVideoSearch, videoStatusFilter]);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -493,7 +494,9 @@ export default function TVIntelligence() {
   const transcribeVideo = async (videoId: string, retry = false) => {
     try {
       setActionLoading(`${retry ? "retry" : "process"}-${videoId}`);
-      const response = retry ? await retryTVVideoProcessing(videoId) : await processTVYouTubeVideo(videoId);
+      const response = retry
+        ? await retryTVVideoProcessingInLanguage(videoId, transcriptOutputLanguage)
+        : await processTVYouTubeVideoInLanguage(videoId, transcriptOutputLanguage);
       toast({
         title: retry ? "Transcription retried" : "Transcription complete",
         description: response.item?.segmentCount
@@ -530,9 +533,9 @@ export default function TVIntelligence() {
       for (const video of transcribableVisibleVideos) {
         try {
           if (video.processing_status === "failed") {
-            await retryTVVideoProcessing(video.id);
+            await retryTVVideoProcessingInLanguage(video.id, transcriptOutputLanguage);
           } else {
-            await processTVYouTubeVideo(video.id);
+            await processTVYouTubeVideoInLanguage(video.id, transcriptOutputLanguage);
           }
           completed += 1;
         } catch (error) {
@@ -1003,7 +1006,7 @@ export default function TVIntelligence() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded-full border border-border/50 px-3 py-2 text-xs text-muted-foreground">
-              Showing {youtubeVideos.length} of {videoPagination.total} synced videos
+              Showing {youtubeVideos.length} synced videos
             </div>
             <Button
               variant="outline"
@@ -1018,6 +1021,23 @@ export default function TVIntelligence() {
               {actionLoading === "process-visible" ? "Transcribing..." : `Transcribe Visible Videos With Apify (${transcribableVisibleVideos.length})`}
             </Button>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Transcript output:</span>
+          {TRANSCRIPT_LANGUAGE_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              onClick={() => setTranscriptOutputLanguage(option.key)}
+              className={`rounded-full border px-3 py-2 text-xs transition-colors ${
+                transcriptOutputLanguage === option.key
+                  ? "border-primary/20 bg-primary/15 text-primary"
+                  : "border-border/50 text-muted-foreground"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
@@ -1083,6 +1103,11 @@ export default function TVIntelligence() {
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusTone(video.processing_status)}`}>
                         {video.processing_status}
                       </span>
+                      {video.transcript_language ? (
+                        <span className="rounded-full border border-border/50 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                          {video.transcript_language}
+                        </span>
+                      ) : null}
                       <span className="text-xs text-muted-foreground">{video.transcript_segment_count || 0} transcript segments</span>
                     </div>
 
@@ -1128,7 +1153,9 @@ export default function TVIntelligence() {
                           ["processing", "queued"].includes(video.processing_status)
                         }
                       >
-                        {video.processing_status === "completed" ? "Re-transcribe With Apify" : "Transcribe With Apify"}
+                        {video.processing_status === "completed"
+                          ? `Re-transcribe (${TRANSCRIPT_LANGUAGE_OPTIONS.find((option) => option.key === transcriptOutputLanguage)?.label})`
+                          : `Transcribe (${TRANSCRIPT_LANGUAGE_OPTIONS.find((option) => option.key === transcriptOutputLanguage)?.label})`}
                       </Button>
                       {video.processing_status === "failed" ? (
                         <Button
@@ -1152,29 +1179,6 @@ export default function TVIntelligence() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            Page {videoPagination.page} of {videoPagination.pages}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setVideoPage((current) => Math.max(1, current - 1))}
-              disabled={videoPagination.page <= 1}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setVideoPage((current) => Math.min(videoPagination.pages, current + 1))}
-              disabled={videoPagination.page >= videoPagination.pages}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
       </div>
 
       <div className="glass-premium rounded-2xl p-5 space-y-4">

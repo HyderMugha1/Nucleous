@@ -73,6 +73,10 @@ async function runActor(client, videoUrl, language) {
 }
 
 export async function transcribeVideoWithApify(videoUrl) {
+  return transcribeVideoWithApifyLanguage(videoUrl);
+}
+
+export async function transcribeVideoWithApifyLanguage(videoUrl, preferredLanguage = null) {
   const client = createClient();
 
   if (!isValidYouTubeUrl(videoUrl)) {
@@ -80,7 +84,7 @@ export async function transcribeVideoWithApify(videoUrl) {
   }
 
   try {
-    let items = await runActor(client, videoUrl);
+    let items = await runActor(client, videoUrl, preferredLanguage);
     if (!items || items.length === 0) {
       throw new Error("No transcript was returned by the Apify actor");
     }

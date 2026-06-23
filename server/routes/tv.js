@@ -125,7 +125,8 @@ router.post(
 router.get(
   "/videos",
   asyncHandler(async (req, res) => {
-    const { page, limit } = parsePagination(req.query);
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(5000, Math.max(1, Number(req.query.limit || 1000)));
     const result = await listTvVideos({
       organizationId: req.auth.organizationId,
       channelId: req.query.channelId ? String(req.query.channelId) : null,
@@ -156,6 +157,7 @@ router.post(
       generateSrt: true,
       jobType: "video_transcription",
       trigger: "manual",
+      outputLanguage: req.body.outputLanguage,
     });
 
     return created(res, { queued: false, item: result });
@@ -170,6 +172,7 @@ router.post(
       videoId: req.params.id,
       jobType: "video_transcription",
       trigger: "manual-now",
+      outputLanguage: req.body.outputLanguage,
     });
     return ok(res, { item: result });
   }),
@@ -191,6 +194,7 @@ router.post(
       generateSrt: true,
       jobType: "retry_failed",
       trigger: "manual-retry",
+      outputLanguage: req.body.outputLanguage,
     });
 
     return created(res, { queued: false, item: result });
