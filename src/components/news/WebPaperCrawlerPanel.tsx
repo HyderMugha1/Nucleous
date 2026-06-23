@@ -176,8 +176,15 @@ function downloadBlobFile(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 500);
 }
 
-export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?: "articles" | "websites" | "logs" | "settings" }) {
+export function WebPaperCrawlerPanel({
+  initialTab = "articles",
+  mode = "full",
+}: {
+  initialTab?: "articles" | "websites" | "logs" | "settings";
+  mode?: "full" | "branding";
+}) {
   const { user } = useAuth();
+  const isBrandingOnly = mode === "branding";
   const [status, setStatus] = useState<WebPaperCrawlerStatusResponse>(defaultCrawlerStatus);
   const [settings, setSettings] = useState<WebPaperCrawlerSettingsRecord | null>(null);
   const [websites, setWebsites] = useState<WebPaperWebsiteRecord[]>([]);
@@ -300,7 +307,7 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
 
   const openWebsiteWorkspace = useCallback(async (website: WebPaperWebsiteRecord) => {
     setSelectedWebsite(website);
-    setWebsiteWorkspaceTab("overview");
+    setWebsiteWorkspaceTab(isBrandingOnly ? "branding" : "overview");
     try {
       await Promise.all([
         loadWebsiteWorkspaceArticles(website.id),
@@ -313,7 +320,7 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
         variant: "destructive",
       });
     }
-  }, [loadBrandingResults, loadWebsiteWorkspaceArticles]);
+  }, [isBrandingOnly, loadBrandingResults, loadWebsiteWorkspaceArticles]);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -577,6 +584,76 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
 
   if (loading && !settings && websites.length === 0 && status.summary.activeWebsites === 0) {
     return <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading Web Paper crawler...</div>;
+  }
+
+  if (isBrandingOnly) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard label="Connected Websites" value={String(websites.length)} note="News websites available for branding scans" />
+          <SummaryCard label="Latest Selected Site" value={selectedWebsite?.name || "None"} note={selectedWebsite ? "Open workspace for screenshots" : "Choose a website below"} />
+          <SummaryCard label="Detected Ads" value={selectedWebsite ? String(brandingSummary.totalAdsDetected) : "0"} note={selectedWebsite ? `${brandingSummary.totalUniqueBrands} unique brands` : "No website selected"} />
+          <SummaryCard label="Last Scan" value={selectedWebsite ? formatShortDateTime(brandingSummary.lastScanTime) : "Never"} note={selectedWebsite ? brandingSummary.mostCommonAdPlacement : "Run a scan to capture screenshots"} />
+        </div>
+
+        <div className="glass-premium rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-foreground">Connected News Websites</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Open a site to review branding screenshots, detected ads, sponsored placements, and scan schedules.
+              </div>
+            </div>
+            <Button variant="outline" onClick={() => void refreshAll()} disabled={Boolean(busyAction)}>
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Refresh Websites
+            </Button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {websites.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">
+                No connected news websites are available yet. Add and manage websites from the Newspaper page, then use Media Intelligence for branding scans and screenshots.
+              </div>
+            )}
+            {websites.map((website) => (
+              <div key={website.id} className="rounded-2xl border border-border/30 bg-background/70 p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-base font-semibold text-foreground">{website.name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{website.base_url}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge variant="outline">{website.scraper_key}</Badge>
+                      <Badge variant={website.is_active ? "default" : "secondary"}>{website.is_active ? "active" : "paused"}</Badge>
+                      <Badge variant="outline">{website.crawl_interval_minutes} min</Badge>
+                    </div>
+                  </div>
+                  <Button onClick={() => void openWebsiteWorkspace(website)}>
+                    Open Branding
+                  </Button>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="rounded-xl border border-border/20 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Last Crawl</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">{formatShortDateTime(website.last_crawled_at)}</div>
+                  </div>
+                  <div className="rounded-xl border border-border/20 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Backfill</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">{website.is_backfill_completed ? "Completed" : "Pending"}</div>
+                  </div>
+                  <div className="rounded-xl border border-border/20 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Branding</div>
+                    <div className="mt-2 text-sm font-medium text-foreground">
+                      {selectedWebsite?.id === website.id ? `${brandingSummary.totalAdsDetected} detections` : "Open workspace"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1021,19 +1098,21 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
       >
         <DialogContent className="max-w-7xl">
           <DialogHeader>
-            <DialogTitle>{selectedWebsite?.name} Workspace</DialogTitle>
+            <DialogTitle>{selectedWebsite?.name} {isBrandingOnly ? "Branding Monitor" : "Workspace"}</DialogTitle>
           </DialogHeader>
 
           {selectedWebsite && (
             <Tabs value={websiteWorkspaceTab} onValueChange={setWebsiteWorkspaceTab} className="space-y-5">
-              <TabsList className="bg-muted/30 border border-border/30 h-10 p-0.5">
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="articles">Articles / Pages</TabsTrigger>
-                <TabsTrigger value="analytics">Analytics</TabsTrigger>
-                <TabsTrigger value="branding">Branding</TabsTrigger>
-              </TabsList>
+              {!isBrandingOnly && (
+                <TabsList className="bg-muted/30 border border-border/30 h-10 p-0.5">
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="articles">Articles / Pages</TabsTrigger>
+                  <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                  <TabsTrigger value="branding">Branding</TabsTrigger>
+                </TabsList>
+              )}
 
-              <TabsContent value="overview" className="space-y-4">
+              {!isBrandingOnly && <TabsContent value="overview" className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <SummaryCard label="Website" value={selectedWebsite.name} note={selectedWebsite.domain} />
                   <SummaryCard label="Base URL" value={selectedWebsite.base_url.replace(/^https?:\/\//, "")} note="Connected news website" />
@@ -1060,9 +1139,9 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
                     </div>
                   </div>
                 </div>
-              </TabsContent>
+              </TabsContent>}
 
-              <TabsContent value="articles" className="space-y-4">
+              {!isBrandingOnly && <TabsContent value="articles" className="space-y-4">
                 <div className="glass-premium rounded-2xl p-4">
                   <div className="flex items-center justify-between">
                     <div className="text-sm font-medium text-foreground">Latest Pages for {selectedWebsite.name}</div>
@@ -1114,9 +1193,9 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
                     </TableBody>
                   </Table>
                 </div>
-              </TabsContent>
+              </TabsContent>}
 
-              <TabsContent value="analytics" className="space-y-4">
+              {!isBrandingOnly && <TabsContent value="analytics" className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="glass-premium rounded-2xl p-5">
                     <div className="text-sm font-medium text-foreground">Top Article Categories</div>
@@ -1143,7 +1222,7 @@ export function WebPaperCrawlerPanel({ initialTab = "articles" }: { initialTab?:
                     </div>
                   </div>
                 </div>
-              </TabsContent>
+              </TabsContent>}
 
               <TabsContent value="branding" className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

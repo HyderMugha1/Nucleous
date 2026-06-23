@@ -113,7 +113,7 @@ export default function MediaIntelligencePage() {
           </p>
         </div>
 
-        <WebPaperCrawlerPanel initialTab="websites" />
+        <WebPaperCrawlerPanel initialTab="websites" mode="branding" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
