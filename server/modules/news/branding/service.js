@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import JSZip from "jszip";
 import { chromium } from "playwright";
+import chromiumForServerless from "@sparticuz/chromium";
 import { config } from "../../../config.js";
 import { supabaseAdmin } from "../../../supabase.js";
 import { getWebsiteById } from "../webPaperCrawler/services/websiteService.js";
@@ -167,6 +168,19 @@ function normalizeDeviceTypes(deviceTypes = []) {
 
 function shouldRunBrandingScanInline() {
   return Boolean(process.env.VERCEL || config.isProduction);
+}
+
+async function launchBrandingBrowser() {
+  if (shouldRunBrandingScanInline()) {
+    const executablePath = await chromiumForServerless.executablePath();
+    return chromium.launch({
+      args: chromiumForServerless.args,
+      executablePath,
+      headless: true,
+    });
+  }
+
+  return chromium.launch({ headless: true });
 }
 
 function normalizeUrls(urls = [], baseUrl) {
@@ -859,8 +873,8 @@ function mapScanStatus(scan) {
 async function processScanInternal(scan, website) {
   const urls = Array.isArray(scan.urls) ? scan.urls : [];
   const deviceTypes = normalizeDeviceTypes(scan.device_types);
-  const browser = await chromium.launch({ headless: true });
   const fullMetadata = { ...(scan.metadata || {}), failures: [] };
+  let browser = null;
 
   try {
     await updateScan(scan.id, {
@@ -870,6 +884,8 @@ async function processScanInternal(scan, website) {
       error_message: null,
       metadata: fullMetadata,
     });
+
+    browser = await launchBrandingBrowser();
 
     for (let urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
       const freshScan = await getScanById(scan.organization_id, scan.id);
@@ -1014,7 +1030,9 @@ async function processScanInternal(scan, website) {
     });
     throw error;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 
