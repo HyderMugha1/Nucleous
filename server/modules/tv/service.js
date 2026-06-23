@@ -31,6 +31,16 @@ function ensureAdminClient() {
   }
 }
 
+function chunkArray(items, chunkSize) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
 export async function createTvChannel({ organizationId, createdBy, youtubeChannelId }) {
   ensureAdminClient();
   const channel = await fetchChannelMetadata(youtubeChannelId);
@@ -432,52 +442,73 @@ export async function listTvVideos({
   status = "all",
 }) {
   ensureAdminClient();
-  let query = supabaseAdmin
-    .from("tv_youtube_videos")
-    .select("*, tv_youtube_channels(id, channel_name, thumbnail_url)", { count: "exact" })
-    .eq("organization_id", organizationId)
-    .order("published_at", { ascending: false })
-    .range(0, Math.max(limit * page, limit) - 1);
+  const targetCount = Math.max(limit * page, limit);
+  const pageSize = 1000;
+  const collectedItems = [];
+  let totalCount = 0;
 
-  if (channelId) query = query.eq("channel_id", channelId);
-  if (search) query = query.or(`title.ilike.%${search}%,youtube_video_id.ilike.%${search}%`);
+  for (let offset = 0; offset < targetCount; offset += pageSize) {
+    let query = supabaseAdmin
+      .from("tv_youtube_videos")
+      .select("*, tv_youtube_channels(id, channel_name, thumbnail_url)", { count: offset === 0 ? "exact" : undefined })
+      .eq("organization_id", organizationId)
+      .order("published_at", { ascending: false })
+      .range(offset, Math.min(offset + pageSize - 1, targetCount - 1));
 
-  const { data, error, count } = await query;
-  if (error) throw new Error(error.message);
+    if (channelId) query = query.eq("channel_id", channelId);
+    if (search) query = query.or(`title.ilike.%${search}%,youtube_video_id.ilike.%${search}%`);
 
-  const items = data || [];
+    const { data, error, count } = await query;
+    if (error) throw new Error(error.message);
+
+    if (offset === 0) {
+      totalCount = count || 0;
+    }
+
+    const batch = data || [];
+    collectedItems.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+  }
+
+  const items = collectedItems;
   const videoIds = items.map((item) => item.id).filter(Boolean);
 
   let transcriptCounts = new Map();
   let latestLogs = new Map();
 
   if (videoIds.length > 0) {
-    const [{ data: transcriptRows, error: transcriptError }, { data: logRows, error: logError }] = await Promise.all([
-      supabaseAdmin
-        .from("tv_transcript_segments")
-        .select("video_id")
-        .eq("organization_id", organizationId)
-        .in("video_id", videoIds),
-      supabaseAdmin
-        .from("tv_processing_logs")
-        .select("video_id, job_status, error_message, created_at")
-        .eq("organization_id", organizationId)
-        .in("video_id", videoIds)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    if (transcriptError) throw new Error(transcriptError.message);
-    if (logError) throw new Error(logError.message);
-
     transcriptCounts = new Map();
-    for (const row of transcriptRows || []) {
-      transcriptCounts.set(row.video_id, (transcriptCounts.get(row.video_id) || 0) + 1);
-    }
-
     latestLogs = new Map();
-    for (const row of logRows || []) {
-      if (!row.video_id || latestLogs.has(row.video_id)) continue;
-      latestLogs.set(row.video_id, row);
+
+    for (const videoIdChunk of chunkArray(videoIds, 200)) {
+      const [{ data: transcriptRows, error: transcriptError }, { data: logRows, error: logError }] = await Promise.all([
+        supabaseAdmin
+          .from("tv_transcript_segments")
+          .select("video_id")
+          .eq("organization_id", organizationId)
+          .in("video_id", videoIdChunk),
+        supabaseAdmin
+          .from("tv_processing_logs")
+          .select("video_id, job_status, error_message, created_at")
+          .eq("organization_id", organizationId)
+          .in("video_id", videoIdChunk)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (transcriptError) throw new Error(transcriptError.message);
+      if (logError) throw new Error(logError.message);
+
+      for (const row of transcriptRows || []) {
+        transcriptCounts.set(row.video_id, (transcriptCounts.get(row.video_id) || 0) + 1);
+      }
+
+      for (const row of logRows || []) {
+        if (!row.video_id || latestLogs.has(row.video_id)) continue;
+        latestLogs.set(row.video_id, row);
+      }
     }
   }
 
@@ -520,7 +551,7 @@ export async function listTvVideos({
   return {
     items: filteredItems.slice(skip, skip + limit),
     total: filteredItems.length,
-    unfilteredTotal: count || 0,
+    unfilteredTotal: totalCount,
   };
 }
 
