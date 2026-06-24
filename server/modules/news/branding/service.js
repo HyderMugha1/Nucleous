@@ -744,19 +744,23 @@ async function captureElementScreenshot(page, candidate, fallbackIndex) {
   }
 
   const box = roundBox(candidate.boundingBox);
-  return Buffer.from(
-    await page.screenshot({
-      type: "png",
-      clip: {
-        x: Math.max(0, box.x),
-        y: Math.max(0, box.y),
-        width: Math.max(MIN_ELEMENT_WIDTH, box.width),
-        height: Math.max(MIN_ELEMENT_HEIGHT, box.height),
-      },
-      animations: "disabled",
-      path: undefined,
-    }),
-  );
+  try {
+    return Buffer.from(
+      await page.screenshot({
+        type: "png",
+        clip: {
+          x: Math.max(0, box.x),
+          y: Math.max(0, box.y),
+          width: Math.max(MIN_ELEMENT_WIDTH, box.width),
+          height: Math.max(MIN_ELEMENT_HEIGHT, box.height),
+        },
+        animations: "disabled",
+        path: undefined,
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 async function updateScan(scanId, payload) {
