@@ -37,10 +37,12 @@ import {
   Calendar,
   Clock3,
   ExternalLink,
+  Eye,
   Link2,
   Music2,
   PlayCircle,
   RefreshCw,
+  Radar,
   Search,
   Sparkles,
   Tv,
@@ -48,7 +50,7 @@ import {
   Youtube,
 } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function formatDay(value?: string | null) {
@@ -607,6 +609,50 @@ export default function TVIntelligence() {
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
+      </div>
+
+      <div className="glass-premium rounded-[1.8rem] p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Broadcast Workspace</div>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              Connect channels, process transcripts, and turn video coverage into searchable intelligence
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              This workspace is the operational layer for YouTube and TikTok ingestion, transcript processing, and spoken-moment search. Use it to keep your video library current, bulk-transcribe priority coverage, and move from raw clips into report-ready signals.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/reports">Open Report Studio</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/media-intelligence">Open Media Intelligence</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/media-intelligence/branding">Open Branding Workspace</Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Connected channels</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{youtubeChannels.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Live YouTube sources currently feeding the TV workspace</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Transcript-ready videos</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{summary.pendingVideos + summary.queuedVideos + summary.processingVideos}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Videos that still need completion, retry, or active processing</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Next best action</div>
+            <div className="mt-2 text-lg font-semibold text-foreground">Transcript Search</div>
+            <div className="mt-1 text-xs text-muted-foreground">Once channels are synced and transcripts are ready, use search below to jump into exact spoken moments</div>
+          </div>
+        </div>
       </div>
 
       <PageVisualDeck

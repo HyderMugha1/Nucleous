@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { FileText, Download, Video, Sparkles, MessageCircle, PlayCircle } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } from "recharts";
 import { PageVisualDeck } from "@/components/PageVisualDeck";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { createReport, getChatbotSummary, getReports, type ReportRecord } from "@/lib/api";
 import { useContextChatbot } from "@/hooks/useContextChatbot";
 import { toast } from "@/hooks/use-toast";
+import { Link } from "react-router-dom";
 
 const briefingTrend = [
   { day: "Mon", changes: 14, risk: 8 },
@@ -148,6 +151,50 @@ export default function ReportStudio() {
         <button onClick={() => void addReport()} className="gradient-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 transition-opacity">+ New Report</button>
       </div>
 
+      <div className="glass-premium rounded-[1.8rem] p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Delivery Workspace</div>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              Turn TV, news, and media signals into export-ready briefings and daily stakeholder reports
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Report Studio is the delivery layer of the product. Use it to generate daily briefings, package intelligence into downloadable outputs, and ask the report copilot for structured summaries based on the rest of the workspace.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/tv">Open TV Workspace</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/news">Open Newspaper</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/media-intelligence">Open Media Intelligence</Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Ready reports</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{reports.filter((report) => report.status.toLowerCase() === "ready").length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Exports currently available for download</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Draft pipeline</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{reports.filter((report) => report.status.toLowerCase() === "draft").length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Reports still being shaped into delivery-ready outputs</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">AI briefing mode</div>
+            <div className="mt-2 text-lg font-semibold text-foreground">Daily Digest</div>
+            <div className="mt-1 text-xs text-muted-foreground">Use the assistant and briefing generator to compress the day into a usable narrative</div>
+          </div>
+        </div>
+      </div>
+
       <div className="reporting-grid grid grid-cols-2 gap-4 md:grid-cols-4">
         {highlights.map(([label, value]) => (
           <div key={label} className="glass-premium reporting-card rounded-2xl p-4">
@@ -246,8 +293,8 @@ export default function ReportStudio() {
             {chatError && <p className="text-xs text-nucleus-negative">{chatError}</p>}
           </div>
           <div className="flex gap-2">
-            <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask report assistant..." className="flex-1 h-9 px-2 rounded-lg border border-border/50 bg-muted/40 text-xs" />
-            <button onClick={() => void sendChat()} className="h-9 px-3 rounded-lg gradient-primary text-primary-foreground text-xs">Send</button>
+            <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask report assistant..." className="flex-1 h-9 text-xs" />
+            <Button onClick={() => void sendChat()} className="h-9 px-3 text-xs">Send</Button>
           </div>
         </div>
       </div>

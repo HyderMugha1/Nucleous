@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { BellRing, Eye, Radar, Tv, Newspaper } from "lucide-react";
+import { Link } from "react-router-dom";
 import { MediaIntelligencePanel } from "@/components/MediaIntelligencePanel";
 import { PageVisualDeck } from "@/components/PageVisualDeck";
-import { WebPaperCrawlerPanel } from "@/components/news/WebPaperCrawlerPanel";
 import { getAlerts, getMediaBrandMonitor, getMediaIntelligenceTrends, type AlertRecord, type MediaBrandMonitorResponse, type MediaTrendResponse } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 
 export default function MediaIntelligencePage() {
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
@@ -102,18 +103,44 @@ export default function MediaIntelligencePage() {
 
       <MediaIntelligencePanel defaultSource="all" />
 
-      <div className="space-y-4">
-        <div className="glass-premium rounded-2xl p-5">
-          <div className="flex items-center gap-2">
-            <Eye className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold text-foreground">Branding Monitor</h2>
+      <div className="glass-premium rounded-[1.8rem] p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex items-center gap-2">
+              <Eye className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Branding Monitor</h2>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Run focused ad and branding scans for connected publishers, then inspect screenshots, labels, placements, failures, and exports in a dedicated full-width workspace.
+            </p>
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Connected publishers</div>
+                <div className="mt-2 text-xl font-semibold text-foreground">{alerts.length}</div>
+                <div className="mt-1 text-xs text-muted-foreground">Current alerting signals feeding the broader media workspace</div>
+              </div>
+              <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Brand detections</div>
+                <div className="mt-2 text-xl font-semibold text-foreground">{brandMonitor?.summary.brandMentionCount ?? 0}</div>
+                <div className="mt-1 text-xs text-muted-foreground">Cross-media brand signals in current summary</div>
+              </div>
+              <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Best use</div>
+                <div className="mt-2 text-xl font-semibold text-foreground">Screenshots</div>
+                <div className="mt-1 text-xs text-muted-foreground">View gallery, detection table, and scan history</div>
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Review ad visibility, sponsored placements, and brand screenshots for connected news websites from the Media Intelligence workspace. Open a website and switch to its <span className="font-medium text-foreground">Branding</span> tab to run scans, manage labels, schedule monitoring, and export evidence.
-          </p>
-        </div>
 
-        <WebPaperCrawlerPanel initialTab="websites" mode="branding" />
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/media-intelligence/branding">Open Branding Workspace</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/news">Manage Newspaper Sources</Link>
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">

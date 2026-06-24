@@ -14,6 +14,7 @@ import {
   Tv,
   Newspaper,
   Radar,
+  Eye,
   Bell,
   Database,
 } from "lucide-react";
@@ -41,6 +42,7 @@ const mainNav = [
   { title: "TV", url: "/tv", icon: Tv },
   { title: "Newspaper", url: "/news", icon: Newspaper },
   { title: "Media Intelligence", url: "/media-intelligence", icon: Radar },
+  { title: "Branding Monitor", url: "/media-intelligence/branding", icon: Eye },
 ];
 
 const actionNav = [

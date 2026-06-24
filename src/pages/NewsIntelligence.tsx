@@ -3,11 +3,13 @@ import { MediaIntelligencePanel } from "@/components/MediaIntelligencePanel";
 import { WebPaperCrawlerPanel } from "@/components/news/WebPaperCrawlerPanel";
 import { useAuth } from "@/context/AuthContext";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getEPaperClips, getNewsArticles, getWebPaperArticles, type EPaperClipRecord, type WebPaperArticleRecord } from "@/lib/api";
-import { Calendar, FileText, Globe, Newspaper, Search } from "lucide-react";
+import { Calendar, Eye, FileText, Globe, Newspaper, Radar, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Bar, BarChart } from "recharts";
 import { toast } from "@/hooks/use-toast";
 
@@ -128,6 +130,47 @@ export default function NewsIntelligence() {
         <p className="text-sm text-muted-foreground mt-1">Live web paper crawling and e-paper intelligence from your backend workspace.</p>
       </div>
 
+      <div className="glass-premium rounded-[1.8rem] p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">News Operations</div>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              Run crawler operations, review publisher coverage, and hand off article URLs to branding scans
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              The Newspaper workspace remains the operational home for connected websites, crawled article management, e-paper coverage, and source administration. Branding screenshots now have their own dedicated workspace, but they still use the synced article URLs from here.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/media-intelligence/branding">Open Branding Workspace</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/media-intelligence">Open Media Intelligence</Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Web paper records</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{webPaperArticles.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Synced and searchable article records from connected websites</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">E-paper clips</div>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{epaper.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">OCR-backed print and archive content in the current workspace</div>
+          </div>
+          <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Next step</div>
+            <div className="mt-2 text-lg font-semibold text-foreground">Branding Screenshots</div>
+            <div className="mt-1 text-xs text-muted-foreground">Use stored article URLs here to power ad and branding capture in the Branding workspace</div>
+          </div>
+        </div>
+      </div>
+
       <PageVisualDeck
         eyebrow="News Visuals"
         title="Publisher flow, coverage spread, and crawled article volume"
@@ -147,6 +190,30 @@ export default function NewsIntelligence() {
       </div>
 
       <MediaIntelligencePanel defaultSource="news" />
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="glass-premium rounded-2xl p-5">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Crawler Workspace</h3>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">Add sources, run crawls, manage saved articles, and keep publisher coverage healthy.</p>
+        </div>
+        <div className="glass-premium rounded-2xl p-5">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Branding Handoff</h3>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">Stored article URLs from this page are now the preferred input for branding screenshot scans.</p>
+        </div>
+        <div className="glass-premium rounded-2xl p-5">
+          <div className="flex items-center gap-2">
+            <Radar className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Media Layer</h3>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">Use Media Intelligence when you want cross-media signal analysis, then drill into the dedicated Branding workspace.</p>
+        </div>
+      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-muted/30 border border-border/30 h-10 p-0.5">

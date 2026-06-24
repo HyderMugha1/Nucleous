@@ -45,12 +45,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  ArrowUpRight,
   Calendar,
   Download,
   ExternalLink,
   Eye,
   Globe,
+  ImageIcon,
   LayoutGrid,
+  ListFilter,
   Pencil,
   Play,
   RefreshCcw,
@@ -220,6 +223,7 @@ export function WebPaperCrawlerPanel({
   const [brandingBusyAction, setBrandingBusyAction] = useState<string | null>(null);
   const [brandingScanStatus, setBrandingScanStatus] = useState<BrandingScanRecord | null>(null);
   const [brandingScanDeviceTypes, setBrandingScanDeviceTypes] = useState<string[]>(["desktop"]);
+  const [brandingWorkspaceView, setBrandingWorkspaceView] = useState<"overview" | "gallery" | "detections" | "scans">("overview");
   const [previewBrandingResult, setPreviewBrandingResult] = useState<BrandingResultRecord | null>(null);
   const [editingBrandingResult, setEditingBrandingResult] = useState<BrandingResultRecord | null>(null);
   const [brandingEditDraft, setBrandingEditDraft] = useState({
@@ -320,6 +324,9 @@ export function WebPaperCrawlerPanel({
   const openWebsiteWorkspace = useCallback(async (website: WebPaperWebsiteRecord) => {
     setSelectedWebsite(website);
     setWebsiteWorkspaceTab(isBrandingOnly ? "branding" : "overview");
+    if (isBrandingOnly) {
+      setBrandingWorkspaceView("overview");
+    }
     try {
       await Promise.all([
         loadWebsiteWorkspaceArticles(website.id),
@@ -645,6 +652,267 @@ export function WebPaperCrawlerPanel({
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
   }, [brandingResults]);
 
+  const websiteStoredArticlePreview = useMemo(() => {
+    return websiteWorkspaceArticles.slice(0, 6).map((article) => ({
+      id: article.id,
+      title: article.title,
+      url: article.canonical_url || article.normalized_url || article.url,
+      publishedAt: article.published_at,
+      sourceName: article.source_name,
+    }));
+  }, [websiteWorkspaceArticles]);
+
+  const brandingRecentFailures = useMemo(() => {
+    return brandingScans
+      .filter((scan) => scan.status === "failed" || Boolean(scan.error_message))
+      .slice(0, 4);
+  }, [brandingScans]);
+
+  const brandingRecentResults = useMemo(() => brandingResults.slice(0, 3), [brandingResults]);
+
+  const brandingWebsiteStats = useMemo(() => {
+    const stats = new Map<string, { detections: number; lastCapture?: string | null }>();
+    for (const result of brandingResults) {
+      const key = result.news_website_id;
+      const current = stats.get(key) || { detections: 0, lastCapture: null };
+      current.detections += 1;
+      if (!current.lastCapture || new Date(result.captured_at || 0).getTime() > new Date(current.lastCapture || 0).getTime()) {
+        current.lastCapture = result.captured_at || null;
+      }
+      stats.set(key, current);
+    }
+    return stats;
+  }, [brandingResults]);
+
+  const brandingCurrentScanIsActive = Boolean(
+    brandingScanStatus && ["queued", "running", "stopping"].includes(brandingScanStatus.status),
+  );
+
+  const brandingResultsEmptyState =
+    "No branding scans yet. Run your first scan to detect ads, sponsored placements, and brand visibility on this news website.";
+
+  const brandingFilterPanel = selectedWebsite ? (
+    <div className="glass-premium rounded-2xl p-4">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+        <ListFilter className="h-4 w-4 text-primary" />
+        Result Filters
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
+        <Input type="date" value={brandingFilters.date_from} onChange={(event) => setBrandingFilters((current) => ({ ...current, date_from: event.target.value }))} />
+        <Input type="date" value={brandingFilters.date_to} onChange={(event) => setBrandingFilters((current) => ({ ...current, date_to: event.target.value }))} />
+        <Input value={brandingFilters.page_url} onChange={(event) => setBrandingFilters((current) => ({ ...current, page_url: event.target.value }))} placeholder="Filter by page URL" />
+        <Input value={brandingFilters.brand_name} onChange={(event) => setBrandingFilters((current) => ({ ...current, brand_name: event.target.value }))} placeholder="Filter by brand" />
+        <Select value={brandingFilters.ad_type} onValueChange={(value) => setBrandingFilters((current) => ({ ...current, ad_type: value }))}>
+          <SelectTrigger><SelectValue placeholder="Ad type" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All ad types</SelectItem>
+            {["display_banner", "native_ad", "sponsored_article", "video_ad", "sidebar_ad", "header_banner", "footer_banner", "in_article_ad", "branded_content", "unknown"].map((item) => (
+              <SelectItem key={item} value={item}>{item}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={brandingFilters.placement} onValueChange={(value) => setBrandingFilters((current) => ({ ...current, placement: value }))}>
+          <SelectTrigger><SelectValue placeholder="Placement" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All placements</SelectItem>
+            {["header", "sidebar", "in_article", "footer", "sticky", "popup", "homepage_hero", "related_articles", "unknown"].map((item) => (
+              <SelectItem key={item} value={item}>{item}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={brandingFilters.device_type} onValueChange={(value) => setBrandingFilters((current) => ({ ...current, device_type: value }))}>
+          <SelectTrigger><SelectValue placeholder="Device" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All devices</SelectItem>
+            <SelectItem value="desktop">Desktop</SelectItem>
+            <SelectItem value="tablet">Tablet</SelectItem>
+            <SelectItem value="mobile">Mobile</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={brandingFilters.status} onValueChange={(value) => setBrandingFilters((current) => ({ ...current, status: value }))}>
+          <SelectTrigger><SelectValue placeholder="Scan status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="detected">Detected</SelectItem>
+            <SelectItem value="reviewed">Reviewed</SelectItem>
+            <SelectItem value="false_positive">False Positive</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  ) : null;
+
+  const brandingGalleryPanel = selectedWebsite ? (
+    <div className="glass-premium rounded-2xl p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <ImageIcon className="h-4 w-4 text-primary" />
+          Screenshot Gallery
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {brandingPagination.total} captured detections
+        </div>
+      </div>
+      {brandingResults.length === 0 && !brandingLoading ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">
+          {brandingResultsEmptyState}
+        </div>
+      ) : (
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {brandingResults.map((result) => (
+            <div key={result.id} className="overflow-hidden rounded-[1.6rem] border border-border/30 bg-background/80 shadow-[0_18px_34px_-28px_rgba(15,23,42,0.25)]">
+              <div className="aspect-[16/10] bg-muted/30">
+                {result.screenshot_url ? (
+                  <img src={result.screenshot_url} alt={result.brand_name || result.ad_type || "Branding capture"} className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No screenshot</div>
+                )}
+              </div>
+              <div className="space-y-3 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold text-foreground">{result.brand_name || "Unlabeled Brand"}</div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">{cleanDisplayText(result.page_url)}</div>
+                  </div>
+                  <Badge variant="outline">{result.device_type || "unknown"}</Badge>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span className="rounded-full bg-muted/60 px-2 py-1">{result.ad_type || "unknown"}</span>
+                  <span className="rounded-full bg-muted/60 px-2 py-1">{result.placement || "unknown"}</span>
+                  <span className="rounded-full bg-muted/60 px-2 py-1">{formatShortDateTime(result.captured_at)}</span>
+                </div>
+                <div className="rounded-2xl border border-border/20 bg-muted/20 p-3 text-xs text-muted-foreground">
+                  <div>Selector: <span className="font-medium text-foreground">{cleanDisplayText(result.selector) || "Not captured"}</span></div>
+                  <div className="mt-1">Confidence: <span className="font-medium text-foreground">{typeof result.confidence === "number" ? result.confidence.toFixed(2) : "n/a"}</span></div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setPreviewBrandingResult(result)}>
+                    <Eye className="mr-2 h-3.5 w-3.5" />
+                    View
+                  </Button>
+                  <Button variant="outline" size="sm" asChild disabled={!result.screenshot_url}>
+                    <a href={result.screenshot_url || "#"} target="_blank" rel="noreferrer">
+                      <Download className="mr-2 h-3.5 w-3.5" />
+                      Download
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  const brandingDetectionsPanel = selectedWebsite ? (
+    <div className="glass-premium rounded-2xl overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-foreground">
+        <div className="flex items-center gap-2">
+          <SquareChartGantt className="h-4 w-4 text-primary" />
+          Detection Table
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Full metadata, review actions, and status controls
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Website</TableHead>
+              <TableHead>Page URL</TableHead>
+              <TableHead>Brand Name</TableHead>
+              <TableHead>Ad Type</TableHead>
+              <TableHead>Placement</TableHead>
+              <TableHead>Screenshot</TableHead>
+              <TableHead>Captured At</TableHead>
+              <TableHead>Device</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {brandingLoading && (
+              <TableRow>
+                <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">Loading branding results...</TableCell>
+              </TableRow>
+            )}
+            {!brandingLoading && brandingResults.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">No branding detections match the current filters.</TableCell>
+              </TableRow>
+            )}
+            {brandingResults.map((result) => (
+              <TableRow key={result.id}>
+                <TableCell>{selectedWebsite.name}</TableCell>
+                <TableCell className="max-w-[220px] truncate">{result.page_url}</TableCell>
+                <TableCell>{result.brand_name || "Unlabeled"}</TableCell>
+                <TableCell>{result.ad_type || "unknown"}</TableCell>
+                <TableCell>{result.placement || "unknown"}</TableCell>
+                <TableCell>
+                  <Button variant="ghost" size="sm" onClick={() => setPreviewBrandingResult(result)}>
+                    <Eye className="mr-2 h-3.5 w-3.5" />
+                    View
+                  </Button>
+                </TableCell>
+                <TableCell>{formatShortDateTime(result.captured_at)}</TableCell>
+                <TableCell>{result.device_type || "unknown"}</TableCell>
+                <TableCell>
+                  <Badge variant={result.is_false_positive ? "secondary" : "outline"}>
+                    {result.is_false_positive ? "false_positive" : result.status}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => {
+                      setEditingBrandingResult(result);
+                      setBrandingEditDraft({
+                        brand_name: result.brand_name || "",
+                        ad_type: result.ad_type || "",
+                        placement: result.placement || "",
+                        is_false_positive: result.is_false_positive,
+                      });
+                    }}>
+                      <Pencil className="mr-2 h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => void runBrandingAction(`flag-${result.id}`, async () => {
+                      const response = await updateNewsBrandingResult(selectedWebsite.id, result.id, {
+                        is_false_positive: !result.is_false_positive,
+                        status: !result.is_false_positive ? "false_positive" : "detected",
+                      });
+                      setBrandingResults((current) => current.map((item) => item.id === response.item.id ? response.item : item));
+                    }, result.is_false_positive ? "Marked as valid detection" : "Marked as false positive")}>
+                      {result.is_false_positive ? "Restore" : "False Positive"}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => void handleDeleteBrandingResult(result.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  ) : null;
+
+  const brandingPaginationControls = selectedWebsite ? (
+    <div className="flex items-center justify-between text-sm text-muted-foreground">
+      <span>{brandingPagination.total} branding detections</span>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={brandingPagination.page <= 1} onClick={() => void loadBrandingResults(selectedWebsite.id, brandingPagination.page - 1)}>
+          Previous
+        </Button>
+        <Button variant="outline" size="sm" disabled={brandingPagination.page >= brandingPagination.pages} onClick={() => void loadBrandingResults(selectedWebsite.id, brandingPagination.page + 1)}>
+          Next
+        </Button>
+      </div>
+    </div>
+  ) : null;
+
   if (loading && !settings && websites.length === 0 && status.summary.activeWebsites === 0) {
     return <div className="glass-premium rounded-2xl p-5 text-sm text-muted-foreground">Loading Web Paper crawler...</div>;
   }
@@ -654,73 +922,544 @@ export function WebPaperCrawlerPanel({
       <div className="space-y-6">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard label="Connected Websites" value={String(websites.length)} note="News websites available for branding scans" />
-          <SummaryCard label="Latest Selected Site" value={selectedWebsite?.name || "None"} note={selectedWebsite ? "Open workspace for screenshots" : "Choose a website below"} />
+          <SummaryCard label="Latest Selected Site" value={selectedWebsite?.name || "None"} note={selectedWebsite ? "Workspace loaded with full branding data" : "Choose a website below"} />
           <SummaryCard label="Detected Ads" value={selectedWebsite ? String(brandingSummary.totalAdsDetected) : "0"} note={selectedWebsite ? `${brandingSummary.totalUniqueBrands} unique brands` : "No website selected"} />
           <SummaryCard label="Last Scan" value={selectedWebsite ? formatShortDateTime(brandingSummary.lastScanTime) : "Never"} note={selectedWebsite ? brandingSummary.mostCommonAdPlacement : "Run a scan to capture screenshots"} />
         </div>
 
-        <div className="glass-premium rounded-2xl p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-foreground">Connected News Websites</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                Open a site to review branding screenshots, detected ads, sponsored placements, and scan schedules.
+        <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="space-y-4">
+            <div className="glass-premium rounded-2xl p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">Connected News Websites</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Choose a publisher, launch the bot, and review screenshots without leaving Media Intelligence.
+                  </div>
+                </div>
+                <Button variant="outline" onClick={() => void refreshAll()} disabled={Boolean(busyAction)}>
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {websites.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">
+                    No connected news websites are available yet. Add and manage websites from the Newspaper page, then use Media Intelligence for branding scans and screenshots.
+                  </div>
+                )}
+                {websites.map((website) => {
+                  const isActiveSelection = selectedWebsite?.id === website.id;
+                  const quickStats = brandingWebsiteStats.get(website.id);
+                  return (
+                    <button
+                      key={website.id}
+                      type="button"
+                      onClick={() => void openWebsiteWorkspace(website)}
+                      className={`w-full rounded-[1.4rem] border p-4 text-left transition-all ${
+                        isActiveSelection
+                          ? "border-primary/45 bg-primary/8 shadow-[0_24px_40px_-32px_rgba(249,115,96,0.55)]"
+                          : "border-border/25 bg-background/75 hover:border-primary/20 hover:bg-background"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-semibold text-foreground">{website.name}</div>
+                          <div className="mt-1 truncate text-xs text-muted-foreground">{website.base_url}</div>
+                        </div>
+                        <Badge variant={website.is_active ? "default" : "secondary"}>{website.is_active ? "active" : "paused"}</Badge>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Badge variant="outline">{website.scraper_key}</Badge>
+                        <Badge variant="outline">{website.crawl_interval_minutes} min</Badge>
+                        <Badge variant="outline">{quickStats?.detections || 0} detections</Badge>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+                        <div className="rounded-xl border border-border/20 bg-muted/20 px-3 py-2">
+                          <div className="uppercase tracking-[0.2em]">Last crawl</div>
+                          <div className="mt-1 font-medium text-foreground">{formatShortDateTime(website.last_crawled_at)}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/20 bg-muted/20 px-3 py-2">
+                          <div className="uppercase tracking-[0.2em]">Last capture</div>
+                          <div className="mt-1 font-medium text-foreground">{formatShortDateTime(quickStats?.lastCapture)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleRunBrandingScanForWebsite(website);
+                          }}
+                          disabled={brandingBusyAction !== null}
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          Send Bot
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openWebsiteWorkspace(website);
+                          }}
+                        >
+                          Open Workspace
+                        </Button>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-            <Button variant="outline" onClick={() => void refreshAll()} disabled={Boolean(busyAction)}>
-              <RefreshCcw className="mr-2 h-4 w-4" />
-              Refresh Websites
-            </Button>
+
+            <div className="glass-premium rounded-2xl p-5">
+              <div className="text-sm font-medium text-foreground">How this workspace works</div>
+              <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+                <p>1. Select a connected news website.</p>
+                <p>2. Send the bot to your stored article URLs first.</p>
+                <p>3. Review screenshots, detections, scan failures, and exports in one place.</p>
+              </div>
+            </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {websites.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">
-                No connected news websites are available yet. Add and manage websites from the Newspaper page, then use Media Intelligence for branding scans and screenshots.
+          <div className="space-y-4">
+            {selectedWebsite ? (
+              <>
+                <div className="glass-premium rounded-[1.8rem] p-6">
+                  <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">Branding Workspace</Badge>
+                        <Badge variant="outline">{selectedWebsite.scraper_key}</Badge>
+                        <Badge variant={selectedWebsite.is_active ? "default" : "secondary"}>{selectedWebsite.is_active ? "active" : "paused"}</Badge>
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">{selectedWebsite.name}</h3>
+                        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                          Review stored article coverage, capture advertising placements, inspect screenshots, and manage scan operations for {selectedWebsite.base_url}.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <div className="rounded-2xl border border-border/25 bg-background/65 px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Stored Article URLs</div>
+                          <div className="mt-2 text-xl font-semibold text-foreground">{websiteWorkspaceArticles.length}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">Pulled from synced articles on your platform</div>
+                        </div>
+                        <div className="rounded-2xl border border-border/25 bg-background/65 px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Current Scan Status</div>
+                          <div className="mt-2 text-xl font-semibold text-foreground">{brandingScanStatus?.status || "idle"}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{brandingCurrentScanIsActive ? `${brandingScanStatus?.progress || 0}% complete` : "Ready to run"}</div>
+                        </div>
+                        <div className="rounded-2xl border border-border/25 bg-background/65 px-4 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">Exports Ready</div>
+                          <div className="mt-2 text-xl font-semibold text-foreground">{brandingPagination.total}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">Detections currently available for CSV, JSON, and ZIP</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => void handleRunBrandingScan()} disabled={brandingBusyAction !== null}>
+                        <Play className="mr-2 h-4 w-4" />
+                        Send Bot
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void handleStopBrandingScan()}
+                        disabled={!brandingCurrentScanIsActive || brandingBusyAction !== null}
+                      >
+                        <StopCircle className="mr-2 h-4 w-4" />
+                        Stop Scan
+                      </Button>
+                      <Button variant="outline" onClick={() => void handleExportBrandingResults("zip")} disabled={brandingBusyAction !== null}>
+                        <Download className="mr-2 h-4 w-4" />
+                        Export ZIP
+                      </Button>
+                      <Button variant="outline" asChild>
+                        <a href={selectedWebsite.base_url} target="_blank" rel="noreferrer">
+                          Visit Website
+                          <ArrowUpRight className="ml-2 h-4 w-4" />
+                        </a>
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <Tabs value={brandingWorkspaceView} onValueChange={(value) => setBrandingWorkspaceView(value as typeof brandingWorkspaceView)} className="space-y-4">
+                  <TabsList className="grid h-auto grid-cols-2 gap-2 rounded-2xl border border-border/30 bg-muted/20 p-1 lg:grid-cols-4">
+                    <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="gallery">Gallery</TabsTrigger>
+                    <TabsTrigger value="detections">Detections</TabsTrigger>
+                    <TabsTrigger value="scans">Scans & Schedule</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="overview" className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <SummaryCard label="Pages Scanned" value={String(brandingSummary.totalPagesScanned)} note="Unique URLs captured" />
+                      <SummaryCard label="Ads Detected" value={String(brandingSummary.totalAdsDetected)} note={`${brandingSummary.averageAdsPerPage} ads per page`} />
+                      <SummaryCard label="Unique Brands" value={String(brandingSummary.totalUniqueBrands)} note={`Most common: ${brandingSummary.mostCommonAdPlacement}`} />
+                      <SummaryCard label="Failed Scans" value={String(brandingSummary.failedScans)} note={`Last scan: ${formatDateTime(brandingSummary.lastScanTime)}`} />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                      <div className="glass-premium rounded-2xl p-5">
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                          <ImageIcon className="h-4 w-4 text-primary" />
+                          Latest Captures
+                        </div>
+                        {brandingRecentResults.length > 0 ? (
+                          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                            {brandingRecentResults.map((result) => (
+                              <button
+                                key={result.id}
+                                type="button"
+                                onClick={() => setPreviewBrandingResult(result)}
+                                className="overflow-hidden rounded-2xl border border-border/25 bg-background/75 text-left transition hover:border-primary/25"
+                              >
+                                <div className="aspect-[4/3] bg-muted/30">
+                                  {result.screenshot_url ? (
+                                    <img src={result.screenshot_url} alt={result.brand_name || "Branding capture"} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No screenshot</div>
+                                  )}
+                                </div>
+                                <div className="space-y-1 p-3">
+                                  <div className="truncate text-sm font-medium text-foreground">{result.brand_name || "Unlabeled Brand"}</div>
+                                  <div className="truncate text-xs text-muted-foreground">{cleanDisplayText(result.page_url)}</div>
+                                  <div className="text-xs text-muted-foreground">{result.ad_type || "unknown"} · {result.placement || "unknown"}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-2xl border border-dashed border-border/40 px-6 py-10 text-center text-sm text-muted-foreground">
+                            {brandingResultsEmptyState}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="glass-premium rounded-2xl p-5">
+                          <div className="text-sm font-medium text-foreground">Scan Readiness</div>
+                          <div className="mt-4 space-y-3">
+                            <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-3">
+                              <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Selected devices</div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {brandingScanDeviceTypes.map((device) => (
+                                  <Badge key={device} variant="outline">{device}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="rounded-2xl border border-border/25 bg-background/70 px-4 py-3">
+                              <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Max URLs this run</div>
+                              <div className="mt-2 text-lg font-semibold text-foreground">{brandingScheduleDraft.max_urls_per_scan}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">Bot prioritizes stored article URLs from your synced website articles.</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="glass-premium rounded-2xl p-5">
+                          <div className="text-sm font-medium text-foreground">Latest Failures</div>
+                          <div className="mt-4 space-y-3">
+                            {brandingRecentFailures.length > 0 ? brandingRecentFailures.map((scan) => (
+                              <div key={scan.id} className="rounded-2xl border border-amber-300/30 bg-amber-50/50 px-4 py-3 text-sm">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="font-medium text-foreground">{scan.status}</span>
+                                  <span className="text-xs text-muted-foreground">{formatShortDateTime(scan.updated_at)}</span>
+                                </div>
+                                <div className="mt-2 text-xs text-muted-foreground">{scan.error_message || "Scan failed without a recorded message."}</div>
+                              </div>
+                            )) : (
+                              <div className="rounded-2xl border border-dashed border-border/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                                No recent scan failures recorded for this website.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="glass-premium rounded-2xl p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-foreground">Stored Article URLs Feeding This Scan</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            These are the synced article records from your platform that the branding bot prefers before falling back to homepage discovery.
+                          </div>
+                        </div>
+                        <Badge variant="outline">{websiteWorkspaceArticles.length} articles</Badge>
+                      </div>
+
+                      {websiteWorkspaceArticlesLoading ? (
+                        <div className="mt-4 rounded-2xl border border-dashed border-border/40 px-6 py-10 text-center text-sm text-muted-foreground">
+                          Loading stored article URLs...
+                        </div>
+                      ) : websiteStoredArticlePreview.length > 0 ? (
+                        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                          {websiteStoredArticlePreview.map((article) => (
+                            <div key={article.id} className="rounded-2xl border border-border/20 bg-background/70 px-4 py-3">
+                              <div className="truncate text-sm font-medium text-foreground">{article.title}</div>
+                              <div className="mt-1 truncate text-xs text-muted-foreground">{article.url}</div>
+                              <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                                <span>{article.sourceName}</span>
+                                <span>{formatShortDateTime(article.publishedAt)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-2xl border border-dashed border-border/40 px-6 py-10 text-center text-sm text-muted-foreground">
+                          No synced article URLs are loaded yet for this website. The bot may fall back to homepage discovery until articles are saved on the platform.
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="gallery" className="space-y-4">
+                    {brandingFilterPanel}
+                    {brandingGalleryPanel}
+                    {brandingPaginationControls}
+                  </TabsContent>
+
+                  <TabsContent value="detections" className="space-y-4">
+                    {brandingFilterPanel}
+                    {brandingDetectionsPanel}
+                    {brandingPaginationControls}
+                  </TabsContent>
+
+                  <TabsContent value="scans" className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_0.8fr]">
+                      <div className="glass-premium rounded-2xl p-5 space-y-4">
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-foreground">Scan Controls</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Detect ads, sponsored placements, and brand visibility using the stored article URLs already synced on your platform.
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button onClick={() => void handleRunBrandingScan()} disabled={brandingBusyAction !== null}>
+                              <Play className="mr-2 h-4 w-4" />
+                              Send Bot for Screenshots
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => void handleStopBrandingScan()}
+                              disabled={!brandingCurrentScanIsActive || brandingBusyAction !== null}
+                            >
+                              <StopCircle className="mr-2 h-4 w-4" />
+                              Stop Running Scan
+                            </Button>
+                            <Button variant="outline" onClick={() => void handleExportBrandingResults("csv")} disabled={brandingBusyAction !== null}>
+                              Export CSV
+                            </Button>
+                            <Button variant="outline" onClick={() => void handleExportBrandingResults("json")} disabled={brandingBusyAction !== null}>
+                              Export JSON
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 rounded-2xl border border-border/30 p-4">
+                          <div className="text-sm font-medium text-foreground">Scan Devices</div>
+                          <div className="flex flex-wrap gap-2">
+                            {["desktop", "tablet", "mobile"].map((device) => (
+                              <Button
+                                key={device}
+                                type="button"
+                                variant={brandingScanDeviceTypes.includes(device) ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => toggleBrandingDevice(device)}
+                              >
+                                {device}
+                              </Button>
+                            ))}
+                          </div>
+                          <div className="rounded-xl bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+                            Latest scan status: <span className="font-medium text-foreground">{brandingScanStatus?.status || "idle"}</span>
+                            {" · "}
+                            {brandingCurrentScanIsActive ? `${brandingScanStatus?.progress || 0}% complete` : "No active scan"}
+                          </div>
+                        </div>
+
+                        <div className="glass-premium rounded-2xl border border-border/30 p-4">
+                          <div className="text-sm font-medium text-foreground">Recent Scan History</div>
+                          <div className="mt-4 space-y-3">
+                            {brandingScans.length > 0 ? brandingScans.map((scan) => (
+                              <div key={scan.id} className="rounded-2xl border border-border/20 bg-background/70 px-4 py-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-medium text-foreground">{scan.status}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      {scan.completed_urls}/{scan.total_urls} URLs complete · {scan.failed_urls} failed
+                                    </div>
+                                  </div>
+                                  <Badge variant="outline">{scan.progress}%</Badge>
+                                </div>
+                                {scan.error_message ? <div className="mt-2 text-xs text-muted-foreground">{scan.error_message}</div> : null}
+                              </div>
+                            )) : (
+                              <div className="rounded-2xl border border-dashed border-border/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                                No scan history yet for this website.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="glass-premium rounded-2xl p-5 space-y-4">
+                        <div className="text-sm font-medium text-foreground">Schedule Scan</div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>Enabled</Label>
+                            <Switch
+                              checked={brandingScheduleDraft.enabled}
+                              onCheckedChange={(checked) => setBrandingScheduleDraft((current) => ({ ...current, enabled: checked }))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Frequency</Label>
+                            <Select
+                              value={brandingScheduleDraft.frequency}
+                              onValueChange={(value: "daily" | "weekly" | "monthly") => setBrandingScheduleDraft((current) => ({ ...current, frequency: value }))}
+                            >
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="daily">Daily</SelectItem>
+                                <SelectItem value="weekly">Weekly</SelectItem>
+                                <SelectItem value="monthly">Monthly</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Time</Label>
+                            <Input
+                              type="time"
+                              value={brandingScheduleDraft.time}
+                              onChange={(event) => setBrandingScheduleDraft((current) => ({ ...current, time: event.target.value }))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Max URLs / Scan</Label>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={50}
+                              value={brandingScheduleDraft.max_urls_per_scan}
+                              onChange={(event) => setBrandingScheduleDraft((current) => ({ ...current, max_urls_per_scan: Number(event.target.value || 25) }))}
+                            />
+                          </div>
+                        </div>
+                        <Button variant="secondary" onClick={() => void handleSaveBrandingSchedule()} disabled={brandingBusyAction !== null}>
+                          Save Schedule Scan
+                        </Button>
+                        {brandingSchedule?.next_run_at ? (
+                          <div className="rounded-2xl border border-border/20 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                            Next scheduled run: <span className="font-medium text-foreground">{formatDateTime(brandingSchedule.next_run_at)}</span>
+                          </div>
+                        ) : null}
+
+                        <div className="rounded-2xl border border-border/20 bg-muted/20 p-4">
+                          <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Top placement patterns</div>
+                          <div className="mt-3 space-y-2">
+                            {websiteBrandPlacements.length > 0 ? websiteBrandPlacements.slice(0, 5).map(([placement, count]) => (
+                              <div key={placement} className="flex items-center justify-between text-sm">
+                                <span className="text-foreground">{placement}</span>
+                                <Badge variant="outline">{count}</Badge>
+                              </div>
+                            )) : (
+                              <div className="text-sm text-muted-foreground">No branding placements detected yet.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </>
+            ) : (
+              <div className="glass-premium rounded-2xl px-6 py-16 text-center">
+                <div className="mx-auto max-w-xl">
+                  <div className="text-sm font-medium text-foreground">Select a website to open the Branding workspace</div>
+                  <div className="mt-2 text-sm text-muted-foreground">
+                    Once a website is selected, you will see stored article URLs, screenshots, detections, failures, scheduling, and exports in one place.
+                  </div>
+                </div>
               </div>
             )}
-            {websites.map((website) => (
-              <div key={website.id} className="rounded-2xl border border-border/30 bg-background/70 p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="text-base font-semibold text-foreground">{website.name}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{website.base_url}</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline">{website.scraper_key}</Badge>
-                      <Badge variant={website.is_active ? "default" : "secondary"}>{website.is_active ? "active" : "paused"}</Badge>
-                      <Badge variant="outline">{website.crawl_interval_minutes} min</Badge>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Button onClick={() => void handleRunBrandingScanForWebsite(website)} disabled={brandingBusyAction !== null}>
-                      <Play className="mr-2 h-4 w-4" />
-                      Send Bot
-                    </Button>
-                    <Button variant="outline" onClick={() => void openWebsiteWorkspace(website)}>
-                      Open Branding
-                    </Button>
-                  </div>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <div className="rounded-xl border border-border/20 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Last Crawl</div>
-                    <div className="mt-2 text-sm font-medium text-foreground">{formatShortDateTime(website.last_crawled_at)}</div>
-                  </div>
-                  <div className="rounded-xl border border-border/20 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Backfill</div>
-                    <div className="mt-2 text-sm font-medium text-foreground">{website.is_backfill_completed ? "Completed" : "Pending"}</div>
-                  </div>
-                  <div className="rounded-xl border border-border/20 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Branding</div>
-                    <div className="mt-2 text-sm font-medium text-foreground">
-                      {selectedWebsite?.id === website.id ? `${brandingSummary.totalAdsDetected} detections` : "Open workspace"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
+
+        <Dialog open={Boolean(previewBrandingResult)} onOpenChange={(open) => { if (!open) setPreviewBrandingResult(null); }}>
+          <DialogContent className="max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>{previewBrandingResult?.brand_name || "Branding Capture"}</DialogTitle>
+            </DialogHeader>
+            {previewBrandingResult && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Detected Element</div>
+                    {previewBrandingResult.screenshot_url ? (
+                      <img src={previewBrandingResult.screenshot_url} alt={previewBrandingResult.brand_name || "Element capture"} className="w-full rounded-2xl border border-border/30 object-cover" />
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">Element screenshot unavailable.</div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Full Page</div>
+                    {previewBrandingResult.full_page_screenshot_url ? (
+                      <img src={previewBrandingResult.full_page_screenshot_url} alt="Full page capture" className="w-full rounded-2xl border border-border/30 object-cover" />
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-border/40 px-6 py-12 text-center text-sm text-muted-foreground">Full-page screenshot unavailable.</div>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <SummaryCard label="Brand" value={previewBrandingResult.brand_name || "Unknown"} note={previewBrandingResult.page_url} />
+                  <SummaryCard label="Ad Type" value={previewBrandingResult.ad_type || "unknown"} note={previewBrandingResult.selector || "No selector"} />
+                  <SummaryCard label="Placement" value={previewBrandingResult.placement || "unknown"} note={previewBrandingResult.device_type || "unknown"} />
+                  <SummaryCard label="Captured" value={formatShortDateTime(previewBrandingResult.captured_at)} note={`Confidence ${previewBrandingResult.confidence ?? 0}`} />
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={Boolean(editingBrandingResult)} onOpenChange={(open) => { if (!open) setEditingBrandingResult(null); }}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Edit Branding Detection</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Brand Name</Label>
+                <Input value={brandingEditDraft.brand_name} onChange={(event) => setBrandingEditDraft((current) => ({ ...current, brand_name: event.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Ad Type</Label>
+                <Input value={brandingEditDraft.ad_type} onChange={(event) => setBrandingEditDraft((current) => ({ ...current, ad_type: event.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Placement</Label>
+                <Input value={brandingEditDraft.placement} onChange={(event) => setBrandingEditDraft((current) => ({ ...current, placement: event.target.value }))} />
+              </div>
+              <div className="flex items-center justify-between rounded-xl border border-border/30 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">False Positive</div>
+                  <div className="text-xs text-muted-foreground">Hide this detection from valid ad-branding counts.</div>
+                </div>
+                <Switch
+                  checked={brandingEditDraft.is_false_positive}
+                  onCheckedChange={(checked) => setBrandingEditDraft((current) => ({ ...current, is_false_positive: checked }))}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setEditingBrandingResult(null)}>Cancel</Button>
+                <Button onClick={() => void handleSaveBrandingEdit()}>Save Changes</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -833,6 +1572,7 @@ export function WebPaperCrawlerPanel({
           </div>
 
           <div className="glass-premium rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -888,6 +1628,7 @@ export function WebPaperCrawlerPanel({
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -937,6 +1678,7 @@ export function WebPaperCrawlerPanel({
           </div>
 
           <div className="glass-premium rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -989,11 +1731,13 @@ export function WebPaperCrawlerPanel({
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-4">
           <div className="glass-premium rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1030,6 +1774,7 @@ export function WebPaperCrawlerPanel({
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
         </TabsContent>
 
@@ -1221,6 +1966,7 @@ export function WebPaperCrawlerPanel({
                   </div>
                 </div>
                 <div className="glass-premium rounded-2xl overflow-hidden">
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1261,6 +2007,7 @@ export function WebPaperCrawlerPanel({
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
               </TabsContent>}
 
@@ -1515,6 +2262,7 @@ export function WebPaperCrawlerPanel({
                     <SquareChartGantt className="h-4 w-4 text-primary" />
                     Detection Table
                   </div>
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1593,6 +2341,7 @@ export function WebPaperCrawlerPanel({
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between text-sm text-muted-foreground">
